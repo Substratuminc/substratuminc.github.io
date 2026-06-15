@@ -138,12 +138,32 @@ case 'arrowright':
               unlockAchievement('data_ghost');
             }
             
+            // Trigger phase 4 unlock notification
+            if (enemy.id === 'boss_10') {
+              eventBus.emit('notification', { message: 'Paradigm Shift Unlocked! Hacking interface open.', type: 'success' });
+            }
+
             // Remove from cell
             useGameStore.setState(s => {
               if (!s.currentMap) return {};
               const nextCells = { ...s.currentMap.cells };
               nextCells[targetKey] = { ...nextCells[targetKey], entityId: undefined };
               
+              let phase = s.phase;
+              let injectionTerminalUnlocked = s.injectionTerminalUnlocked;
+              let terminalHistory = [...s.terminalHistory];
+
+              if (enemy.id === 'boss_10') {
+                phase = 'PARADIGM';
+                injectionTerminalUnlocked = true;
+                terminalHistory.push(
+                  '>> [SYSTEM ALERT] NODE MONITOR ARCHIVIST OFFLINE.',
+                  '>> RECOVERED ARCHIVIST KEY FILE.',
+                  '>> PARADIGM COMPILATION PORT ACTIVE.',
+                  '>> [PHASE 4 UNLOCKED: THE PARADIGM SHIFT]'
+                );
+              }
+
               // Handle drops
               const nextInv = [...s.player.inventory];
               enemy.drops.forEach(drop => {
@@ -177,6 +197,9 @@ case 'arrowright':
               }
 
               return {
+                phase,
+                injectionTerminalUnlocked,
+                terminalHistory: terminalHistory.slice(-200),
                 currentMap: { ...s.currentMap, cells: nextCells },
                 player: {
                   ...s.player,

@@ -9,9 +9,10 @@ import type { AutomationUnit, ResourceKey } from '../../store/types';
 
 interface AutomationNodeProps {
   unit: AutomationUnit;
+  revealName?: boolean;
 }
 
-export const AutomationNode: React.FC<AutomationNodeProps> = ({ unit }) => {
+export const AutomationNode: React.FC<AutomationNodeProps> = ({ unit, revealName }) => {
   const resources = useGameStore(state => state.resources);
   const metadata = BALANCING_TABLE[unit.id] || {
     description: '',
@@ -172,7 +173,7 @@ export const AutomationNode: React.FC<AutomationNodeProps> = ({ unit }) => {
         }}
       >
         <div>
-          <span style={{ fontWeight: 'bold' }}>[LOCKED: Tier {unit.tier}]</span>
+          <span style={{ fontWeight: 'bold' }}>[LOCKED: {revealName ? unit.name : `Tier ${unit.tier}`}]</span>
           <div style={{ fontSize: '0.8rem' }}>Unlock cost: {
             Object.entries(unit.unlockCost)
               .filter(([_, amt]) => amt > 0)
@@ -257,11 +258,24 @@ export const AutomationNode: React.FC<AutomationNodeProps> = ({ unit }) => {
       <div style={{ fontSize: '0.8rem', marginTop: '4px', opacity: 0.75, display: 'flex', justifyContent: 'space-between' }}>
         <span>Cost: {formatCost()}</span>
         {unit.failureState && (
-          <span style={{ color: 'var(--amber-warning)', fontWeight: 'bold' }}>
-            HALTED: {unit.failureState.type}
+          <span 
+            className="blink-red" 
+            style={{ 
+              color: '#ff3333', 
+              fontWeight: 'bold',
+              animation: 'blink-halt 1.2s step-end infinite'
+            }}
+          >
+            ⚠️ SYSTEM HALTED: {unit.failureState.type} (Purge / Reboot in FAILURES tab!)
           </span>
         )}
       </div>
+      <style>{`
+        @keyframes blink-halt {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </div>
   );
 };

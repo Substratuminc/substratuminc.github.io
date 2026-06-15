@@ -42,6 +42,7 @@ export const ResourceDisplay: React.FC = () => {
   const ventRemaining = getRemainingTime('vent', 1000);
   const purgeRemaining = getRemainingTime('vent_full', 5000);
   const scanRemaining = getRemainingTime('scan', 10000);
+  const generateWattsRemaining = getRemainingTime('generate_watts', 1000);
 
   const hasBoostResources = resources.gridWatts.amount >= 5;
   const hasPurgeResources = resources.gridWatts.amount >= 3;
@@ -92,6 +93,19 @@ export const ResourceDisplay: React.FC = () => {
               title="Full system heat purge. Costs 3 Watts."
             >
               {purgeRemaining ? `PURGING (${purgeRemaining}s)` : 'FULL PURGE'}
+            </button>
+          </div>
+
+          {/* Recover Power Buttons */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="op-button"
+              disabled={!!generateWattsRemaining}
+              onClick={() => eventBus.emit('terminal-command', 'generate_watts')}
+              style={{ flex: 1 }}
+              title="Manual grid recovery. Generates 40 Watts."
+            >
+              {generateWattsRemaining ? `RECOVERING (${generateWattsRemaining}s)` : 'RECOVER POWER (+40W)'}
             </button>
           </div>
 

@@ -9,40 +9,14 @@ import { Tooltip } from '../../components/Tooltip';
 export const InfrastructurePanel: React.FC = () => {
   const resources = useGameStore(state => state.resources);
   const phase = useGameStore(state => state.phase);
-  const powerAllocation = useGameStore(state => state.powerAllocation || { signalAmp: 0, thermalDuct: 0 });
-  
-  const signalAmpAlloc = powerAllocation.signalAmp || 0;
-  const thermalDuctAlloc = powerAllocation.thermalDuct || 0;
-  const wattsCap = resources.gridWatts.capacity;
-  const totalAllocated = signalAmpAlloc + thermalDuctAlloc;
-  const availableWatts = wattsCap - totalAllocated;
-
-  const handleSignalAmpAllocChange = (val: number) => {
-    useGameStore.setState(s => ({
-      powerAllocation: {
-        ...s.powerAllocation,
-        signalAmp: val
-      }
-    }));
-  };
-
-  const handleThermalDuctAllocChange = (val: number) => {
-    useGameStore.setState(s => ({
-      powerAllocation: {
-        ...s.powerAllocation,
-        thermalDuct: val
-      }
-    }));
-  };
-
   // Deduce upgrade levels from capacity limits
   const gridWattsCap = resources.gridWatts.capacity;
   const thermalCyclesCap = resources.thermalCycles.capacity;
   const staticNoiseCap = resources.staticNoise.capacity;
 
-  const conduitLevel = Math.max(0, Math.round((gridWattsCap - 500) / 200));
-  const ductLevel = Math.max(0, Math.round((thermalCyclesCap - 100) / 25));
-  const ampLevel = Math.max(0, Math.round((staticNoiseCap - 250 - conduitLevel * 100) / 300));
+  const conduitLevel = Math.max(0, Math.round(Math.log(gridWattsCap / 500) / Math.log(1.5)));
+  const ductLevel = Math.max(0, Math.round(Math.log(thermalCyclesCap / 100) / Math.log(1.6)));
+  const ampLevel = Math.max(0, Math.round(Math.log(Math.max(1, (staticNoiseCap - conduitLevel * 200) / 250)) / Math.log(1.8)));
 
   // Costs
   const ampCost = Math.round(100 * Math.pow(1.65, ampLevel));
@@ -92,7 +66,7 @@ export const InfrastructurePanel: React.FC = () => {
         {/* Signal Amplifier */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <Tooltip text="Amplifies terminal reception signals. Increases passive Static Noise production (+0.5/lvl) and Static capacity (+300/lvl)." position="right">
+            <Tooltip text="Amplifies terminal reception signals. Increases passive Static Noise production (+0.8/lvl) and exponentially expands Static capacity." position="right">
               <div style={{ fontWeight: 'bold', cursor: 'help', borderBottom: '1px dotted var(--terminal-green)', display: 'inline-block' }}>[SIGNAL AMPLIFIER]</div>
             </Tooltip>
             <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>
@@ -120,7 +94,7 @@ export const InfrastructurePanel: React.FC = () => {
         {/* Thermal Duct */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <Tooltip text="Cooling pipes and ventilation valves. Increases maximum Thermal Cycles capacity (+25/lvl) and passive heat dissipation." position="right">
+            <Tooltip text="Cooling pipes and ventilation valves. Exponentially expands maximum Thermal Cycles capacity and increases passive heat dissipation (+0.5/lvl)." position="right">
               <div style={{ fontWeight: 'bold', cursor: 'help', borderBottom: '1px dotted var(--terminal-green)', display: 'inline-block' }}>[THERMAL DUCT]</div>
             </Tooltip>
             <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>
@@ -148,7 +122,7 @@ export const InfrastructurePanel: React.FC = () => {
         {/* Power Conduit */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <Tooltip text="Emergency power lines routed to the terminal. Increases maximum Watts capacity (+200/lvl), Watts production (+0.02/lvl), and Static Noise capacity (+100/lvl)." position="right">
+            <Tooltip text="Emergency power lines routed to the terminal. Exponentially expands maximum Watts capacity, increases passive Watts production (+0.15/lvl), and boosts Static Noise capacity (+200/lvl)." position="right">
               <div style={{ fontWeight: 'bold', cursor: 'help', borderBottom: '1px dotted var(--terminal-green)', display: 'inline-block' }}>[POWER CONDUIT]</div>
             </Tooltip>
             <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>
@@ -174,65 +148,7 @@ export const InfrastructurePanel: React.FC = () => {
         </div>
       </div>
 
-      {/* POWER ROUTING */}
-      {conduitLevel >= 1 && (
-        <div style={{ marginTop: '20px', borderTop: '1px dashed var(--terminal-green)', paddingTop: '15px' }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>POWER ROUTING</div>
-          <div style={{ fontSize: '0.85rem', marginBottom: '12px', opacity: 0.8 }}>
-            Reroute grid power to boost subsystem throughput. Allocated: {totalAllocated}W / {wattsCap}W
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {/* Signal Amp Slider */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
-                <span>Signal Amp Boost:</span>
-                <span style={{ fontWeight: 'bold' }}>{signalAmpAlloc} W (+{Math.min(40, signalAmpAlloc * 2)}% output)</span>
-              </div>
-              <input 
-                type="range"
-                min="0"
-                max={signalAmpAlloc + availableWatts}
-                value={signalAmpAlloc}
-                onChange={(e) => handleSignalAmpAllocChange(parseInt(e.target.value, 10))}
-                style={{
-                  width: '100%',
-                  background: '#111',
-                  accentColor: 'var(--terminal-green)',
-                  outline: 'none',
-                  height: '4px',
-                  margin: '6px 0',
-                  cursor: 'pointer',
-                }}
-              />
-            </div>
-
-            {/* Thermal Duct Slider */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
-                <span>Thermal Vent Boost:</span>
-                <span style={{ fontWeight: 'bold' }}>{thermalDuctAlloc} W (+{Math.min(40, thermalDuctAlloc * 2)}% vent rate)</span>
-              </div>
-              <input 
-                type="range"
-                min="0"
-                max={thermalDuctAlloc + availableWatts}
-                value={thermalDuctAlloc}
-                onChange={(e) => handleThermalDuctAllocChange(parseInt(e.target.value, 10))}
-                style={{
-                  width: '100%',
-                  background: '#111',
-                  accentColor: 'var(--terminal-green)',
-                  outline: 'none',
-                  height: '4px',
-                  margin: '6px 0',
-                  cursor: 'pointer',
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* POWER ROUTING sliders removed */}
 
       {/* Phase Gating Hint */}
       {ampLevel >= 7 && phase === 'TERMINAL' && (

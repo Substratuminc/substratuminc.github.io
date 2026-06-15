@@ -7,10 +7,10 @@ import { CURRENT_SAVE_VERSION } from './constants';
 const createDefaultResources = () => ({
   staticNoise: { amount: 0, capacity: 250, productionPerTick: 0, consumptionPerTick: 0 },
   thermalCycles: { amount: 0, capacity: 100, productionPerTick: 0, consumptionPerTick: 0 },
-  gridWatts: { amount: 15, capacity: 500, productionPerTick: 0, consumptionPerTick: 0 }, // start with 15W (3% of 500)
-  quantumFoam: { amount: 0, capacity: 200, productionPerTick: 0, consumptionPerTick: 0 },
-  structuredLogic: { amount: 0, capacity: 50, productionPerTick: 0, consumptionPerTick: 0 },
-  corruptedData: { amount: 0, capacity: 25, productionPerTick: 0, consumptionPerTick: 0 },
+  gridWatts: { amount: 100, capacity: 500, productionPerTick: 0, consumptionPerTick: 0 }, // start with 100W (20% of 500)
+  quantumFoam: { amount: 0, capacity: 1000, productionPerTick: 0, consumptionPerTick: 0 },
+  structuredLogic: { amount: 0, capacity: 2000, productionPerTick: 0, consumptionPerTick: 0 },
+  corruptedData: { amount: 0, capacity: 100, productionPerTick: 0, consumptionPerTick: 0 },
   voidEchoes: { amount: 0, capacity: 1000, productionPerTick: 0, consumptionPerTick: 0 },
   paradigmShards: { amount: 0, capacity: 1000, productionPerTick: 0, consumptionPerTick: 0 },
 });
@@ -35,7 +35,7 @@ const createDefaultAutomationUnits = (): AutomationUnit[] => {
       count: 0,
       isActive: false,
       productionTable: { ...emptyRecord(), staticNoise: 2.0 },
-      consumptionTable: { ...emptyRecord(), gridWatts: 0.5 },
+      consumptionTable: { ...emptyRecord(), gridWatts: 0.1 },
       failureState: null,
       failureCooldownTicks: 0,
       unlockCost: { ...emptyRecord(), staticNoise: 500, gridWatts: 100 },
@@ -61,7 +61,7 @@ const createDefaultAutomationUnits = (): AutomationUnit[] => {
       count: 0,
       isActive: false,
       productionTable: { ...emptyRecord(), quantumFoam: 0.8, thermalCycles: 0.3 },
-      consumptionTable: { ...emptyRecord(), staticNoise: 0.5, gridWatts: 1.0 },
+      consumptionTable: { ...emptyRecord(), staticNoise: 0.5, gridWatts: 0.2 },
       failureState: null,
       failureCooldownTicks: 0,
       unlockCost: { ...emptyRecord(), staticNoise: 1200, gridWatts: 400, structuredLogic: 20 },

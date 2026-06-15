@@ -23,24 +23,18 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
   // Signal Amplifier level (level >= 1)
   const ampLevel = getUpgradeLevel(state, 'SIGNAL_AMPLIFIER');
   if (ampLevel > 0) {
-    const ampPower = state.powerAllocation?.signalAmp || 0;
-    const ampBoost = 1 + Math.min(0.40, ampPower * 0.02);
-    result.staticNoise.produced += ampLevel * 0.5 * ampBoost;
-    result.gridWatts.consumed += ampPower / 20;
+    result.staticNoise.produced += ampLevel * 0.8;
   }
 
   // Thermal Duct level (level >= 1) - auto-vents heat
   const ductLevel = getUpgradeLevel(state, 'THERMAL_DUCT');
   if (ductLevel > 0) {
-    const ductPower = state.powerAllocation?.thermalDuct || 0;
-    const ductBoost = 1 + Math.min(0.40, ductPower * 0.02);
-    result.thermalCycles.consumed += ductLevel * 0.3 * ductBoost;
-    result.gridWatts.consumed += ductPower / 20;
+    result.thermalCycles.consumed += ductLevel * 0.5;
   }
 
   // Power Conduit level - trickle power recovery
   const conduitLevel = getUpgradeLevel(state, 'POWER_CONDUIT');
-  result.gridWatts.produced += 0.05 + conduitLevel * 0.02;
+  result.gridWatts.produced += 0.40 + conduitLevel * 0.15;
 
   // 2. META INJECTIONS
   // Check if STATIC_PRODUCTION_RATE is modified by injection
@@ -108,7 +102,7 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
       } else {
         result.staticNoise.produced += activeCount * 2.0 * tierMultiplier * staticRateMultiplier;
       }
-      result.gridWatts.consumed += activeCount * 0.5 * tierMultiplier;
+      result.gridWatts.consumed += activeCount * 0.1 * tierMultiplier;
 
     } else if (unit.id === 'compiler') {
       if (unit.failureState?.type === 'THERMAL_OVERLOAD') {
@@ -123,12 +117,12 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
 
     } else if (unit.id === 'daemon') {
       if (unit.failureState?.type === 'LOGIC_LOOP') {
-        // Consumes 2W/tick with zero output
-        result.gridWatts.consumed += unit.count * 2.0;
+        // Consumes 0.4W/tick with zero output (double normal consumption)
+        result.gridWatts.consumed += unit.count * 0.4;
       } else {
-        // Normal: -0.5 Static, -1.0W, +0.8 QF, +0.3 Thermal
+        // Normal: -0.5 Static, -0.2W, +0.8 QF, +0.3 Thermal
         result.staticNoise.consumed += activeCount * 0.5 * tierMultiplier;
-        result.gridWatts.consumed += activeCount * 1.0 * tierMultiplier;
+        result.gridWatts.consumed += activeCount * 0.2 * tierMultiplier;
         result.quantumFoam.produced += activeCount * 0.8 * tierMultiplier;
         result.thermalCycles.produced += activeCount * 0.3 * tierMultiplier;
       }
@@ -238,9 +232,9 @@ export function getUpgradeLevel(state: GameState, upgradeId: string): number {
   const thermalCyclesCap = state.resources.thermalCycles.capacity;
   const staticNoiseCap = state.resources.staticNoise.capacity;
 
-  const conduitLevel = Math.max(0, Math.round((gridWattsCap - 500) / 200));
-  const ductLevel = Math.max(0, Math.round((thermalCyclesCap - 100) / 25));
-  const amplifierLevel = Math.max(0, Math.round((staticNoiseCap - 250 - conduitLevel * 100) / 300));
+  const conduitLevel = Math.max(0, Math.round(Math.log(gridWattsCap / 500) / Math.log(1.5)));
+  const ductLevel = Math.max(0, Math.round(Math.log(thermalCyclesCap / 100) / Math.log(1.6)));
+  const amplifierLevel = Math.max(0, Math.round(Math.log(Math.max(1, (staticNoiseCap - conduitLevel * 200) / 250)) / Math.log(1.8)));
 
   if (upgradeId === 'SIGNAL_AMPLIFIER') return amplifierLevel;
   if (upgradeId === 'THERMAL_DUCT') return ductLevel;

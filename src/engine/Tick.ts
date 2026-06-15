@@ -6,6 +6,7 @@ import { computeResourceProduction } from '../store/selectors';
 import type { ResourceKey, ActiveStatusEffect, AutomationFailureState, AutomationUnit } from '../store/types';
 import { TICK_RATE_MS } from '../store/constants';
 import { checkAchievements } from './AchievementChecker';
+import { eventBus } from './EventBus';
 
 let tickInitialized = false;
 
@@ -185,6 +186,13 @@ export function initializeTick(): void {
               cooldown = 60; // Auto resets in 60 ticks
               terminalHistory.push('>> [ALERT] Lattice.net grid collision! Automatic reboot in 60 ticks.');
             }
+          }
+
+          if (failureState) {
+            const msg = `ALERT: ${unit.name} encountered ${failureState.type}!`;
+            setTimeout(() => {
+              eventBus.emit('notification', { message: msg, type: 'warn' });
+            }, 0);
           }
         }
 

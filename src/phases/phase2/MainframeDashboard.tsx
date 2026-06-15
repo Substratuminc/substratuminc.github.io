@@ -17,6 +17,9 @@ export const MainframeDashboard: React.FC = () => {
   const phase = useGameStore(state => state.phase);
   const voidEchoes = resources.voidEchoes.amount;
 
+  const compilerUnit = automationUnits.find(u => u.id === 'compiler');
+  const isMarketUnlocked = compilerUnit ? compilerUnit.count > 0 : false;
+
   const triggerReboot = (id: string) => {
     const results = parseCommand(`reboot_node ${id}`);
     useGameStore.setState(s => ({
@@ -120,18 +123,21 @@ export const MainframeDashboard: React.FC = () => {
             [FAILURES {activeFailures.length > 0 ? `(${activeFailures.length})` : ''}]
           </button>
           <button 
-            onClick={() => setActiveTab('MARKET')}
+            onClick={() => isMarketUnlocked && setActiveTab('MARKET')}
+            disabled={!isMarketUnlocked}
             style={{
               background: activeTab === 'MARKET' ? 'var(--terminal-green)' : 'transparent',
-              color: activeTab === 'MARKET' ? '#000000' : 'var(--terminal-green)',
-              border: '1px solid var(--terminal-green)',
-              cursor: 'pointer',
+              color: activeTab === 'MARKET' ? '#000000' : (isMarketUnlocked ? 'var(--terminal-green)' : '#444444'),
+              border: '1px solid ' + (isMarketUnlocked ? 'var(--terminal-green)' : '#444444'),
+              cursor: isMarketUnlocked ? 'pointer' : 'not-allowed',
               fontFamily: 'Share Tech Mono, monospace',
               textAlign: 'left',
               padding: '4px 6px',
+              opacity: isMarketUnlocked ? 1 : 0.6,
             }}
+            title={isMarketUnlocked ? 'Open trading market' : 'LOCKED: Unlock Compiler.bat node first'}
           >
-            [MARKET]
+            {isMarketUnlocked ? '[MARKET]' : '[MARKET — LOCKED]'}
           </button>
         </div>
 
@@ -140,7 +146,7 @@ export const MainframeDashboard: React.FC = () => {
           <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>UNIT ROSTER</div>
           {automationUnits.filter(u => u.count > 0).map(u => (
             <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', color: u.failureState ? 'var(--amber-warning)' : 'var(--terminal-green)' }}>
-              <span>{u.name.split('.')[0]}</span>
+              <span>{u.failureState ? '⚠️ ' : ''}{u.name.split('.')[0]}</span>
               <span>x{u.count}</span>
             </div>
           ))}
@@ -189,17 +195,38 @@ export const MainframeDashboard: React.FC = () => {
           <div>
             <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>SCHEMATICS MODULES</div>
             {/* Show all 10 tiers, filter out Tier 10 if not unlocked in secrets */}
-            {automationUnits
-              .filter(u => u.id !== 'glitch_mother' || u.count > 0)
-              .map(unit => (
-                <AutomationNode key={unit.id} unit={unit} />
-              ))}
+            {(() => {
+              const lastUnlockedIdx = automationUnits.reduce((acc, u, idx) => u.count > 0 ? idx : acc, -1);
+              return automationUnits
+                .map((unit, idx) => ({ unit, idx }))
+                .filter(({ unit }) => unit.id !== 'glitch_mother' || unit.count > 0)
+                .map(({ unit, idx }) => (
+                  <AutomationNode 
+                    key={unit.id} 
+                    unit={unit} 
+                    revealName={unit.count > 0 || idx <= lastUnlockedIdx + 2 || (lastUnlockedIdx === -1 && idx < 2)}
+                  />
+                ));
+            })()}
           </div>
         )}
 
         {activeTab === 'FAILURES' && (
           <div>
             <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>FAILURE TRIAGE PORTAL</div>
+            <div 
+              style={{ 
+                border: '1px solid var(--amber-warning)', 
+                background: 'rgba(255, 107, 53, 0.05)', 
+                padding: '8px', 
+                fontSize: '0.85rem', 
+                marginBottom: '10px',
+                lineHeight: '1.3',
+                color: 'var(--amber-warning)'
+              }}
+            >
+              <strong>DIAGNOSTIC WARNING:</strong> Automation nodes trigger memory leaks, loops, or overflows when static noise concentrations or thermal loads spike. Halted nodes produce zero yields and continue to drain power/resources. Trigger a reboot to flush node caches and restore nominal operation.
+            </div>
             {activeFailures.length === 0 ? (
               <div style={{ color: '#88cc88', opacity: 0.8 }}>All mainframe automation systems nominal. No errors queued.</div>
             ) : (
@@ -243,7 +270,7 @@ export const MainframeDashboard: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'MARKET' && (
+        {activeTab === 'MARKET' && isMarketUnlocked && (
           <div>
             <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>informational trading network</div>
             <div style={{ opacity: 0.8, fontSize: '0.85rem', marginBottom: '10px' }}>

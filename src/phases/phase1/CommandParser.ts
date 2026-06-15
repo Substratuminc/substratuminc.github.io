@@ -13,6 +13,7 @@ export const cooldowns: Record<string, number> = {
   scan: 0,
   reboot: 0,
   compile: 0,
+  generate_watts: 0,
 };
 
 export function parseCommand(inputStr: string): string[] {
@@ -42,11 +43,10 @@ export function parseCommand(inputStr: string): string[] {
         '>> AVAILABLE COMMANDS:',
         '   harvest_static [--boost]           - Harvest static signal from antenna.',
         '                                      - --boost: +20 Static. Costs 5W. 2s cooldown.',
+        '   generate_watts                     - Route temporary energy back into reserves.',
+        '                                      - +40 Watts. 1s cooldown.',
         '   vent_heat [--full]                 - Disperse system thermal cycles.',
         '                                      - --full: vent to 0. Costs 3W. 5s cooldown.',
-        '   allocate_power --target=<id> --watts=<n>',
-        '                                      - Route Watts to boost infrastructure (+2%/W).',
-        '                                      - Target IDs: signal_amp, thermal_duct',
         '   scan_subsystem [--sector=<n>]      - Scan facility subsystems. Costs 15 Static, 5W.',
         '   reboot_node <node_id>              - Recover a failed automation node. Costs 50W, 20°.',
         '   compile_fragment bootloader.key    - Compile recovery fragments into handshake key.',
@@ -102,6 +102,28 @@ export function parseCommand(inputStr: string): string[] {
       }
     }
 
+    case 'generate_watts': {
+      const cooldownKey = 'generate_watts';
+      const cooldownDuration = 1000; // 1s
+
+      if (now - cooldowns[cooldownKey] < cooldownDuration) {
+        const remaining = ((cooldownDuration - (now - cooldowns[cooldownKey])) / 1000).toFixed(1);
+        return [`>> Cooldown active. Wait ${remaining}s.`];
+      }
+
+      cooldowns[cooldownKey] = now;
+      useGameStore.setState(s => {
+        const nextWatts = Math.min(s.resources.gridWatts.capacity, s.resources.gridWatts.amount + 40);
+        return {
+          resources: {
+            ...s.resources,
+            gridWatts: { ...s.resources.gridWatts, amount: nextWatts },
+          },
+        };
+      });
+      return ['>> Grid recovery subroutines active. +40 Watts generated.'];
+    }
+
     case 'vent_heat': {
       const isFull = hasFlag('--full');
       const cooldownKey = isFull ? 'vent_full' : 'vent';
@@ -143,45 +165,7 @@ export function parseCommand(inputStr: string): string[] {
       }
     }
 
-    case 'allocate_power': {
-      const target = getArgValue('--target');
-      const wattsStr = getArgValue('--watts');
-
-      if (!target || !wattsStr) {
-        return ['>> Error: Missing target or watts. Syntax: allocate_power --target=<id> --watts=<n>'];
-      }
-
-      const watts = parseInt(wattsStr, 10);
-      if (isNaN(watts) || watts < 0) {
-        return ['>> Error: Watts must be a positive integer.'];
-      }
-
-      if (target !== 'signal_amp' && target !== 'thermal_duct') {
-        return [`>> Error: Unknown target "${target}". Valid targets: signal_amp, thermal_duct`];
-      }
-
-      const otherAllocated = target === 'signal_amp' 
-        ? state.powerAllocation.thermalDuct 
-        : state.powerAllocation.signalAmp;
-
-      const totalCapacity = state.resources.gridWatts.capacity;
-
-      if (otherAllocated + watts > totalCapacity) {
-        return [`>> Error: Allocation exceeds Grid Watts capacity of ${totalCapacity}W. Available: ${totalCapacity - otherAllocated}W.`];
-      }
-
-      useGameStore.setState(s => {
-        const nextAllocation = { ...s.powerAllocation };
-        if (target === 'signal_amp') {
-          nextAllocation.signalAmp = watts;
-        } else {
-          nextAllocation.thermalDuct = watts;
-        }
-        return { powerAllocation: nextAllocation };
-      });
-
-      return [`>> Power re-routed. ${target === 'signal_amp' ? 'Signal Amplifier' : 'Thermal Duct'} boosted with ${watts} Watts.`];
-    }
+    // allocate_power command removed
 
     case 'scan_subsystem': {
       const sectorStr = getArgValue('--sector');
@@ -293,9 +277,9 @@ export function parseCommand(inputStr: string): string[] {
         return ['>> Error: Specify target file to compile. (Syntax: compile_fragment bootloader.key)'];
       }
 
-      const conduitLevel = Math.round((state.resources.gridWatts.capacity - 500) / 200);
+      const conduitLevel = Math.max(0, Math.round(Math.log(state.resources.gridWatts.capacity / 500) / Math.log(1.5)));
       const staticNoiseCap = state.resources.staticNoise.capacity;
-      const ampLevel = Math.round((staticNoiseCap - 250 - conduitLevel * 100) / 300);
+      const ampLevel = Math.max(0, Math.round(Math.log(Math.max(1, (staticNoiseCap - conduitLevel * 200) / 250)) / Math.log(1.8)));
 
       if (ampLevel < 7) {
         return ['>> Error: Signal Amplifier level insufficient. Requires Level 7 to receive all boot blocks.'];
@@ -449,12 +433,12 @@ export function parseCommand(inputStr: string): string[] {
       const thermalCyclesCap = state.resources.thermalCycles.capacity;
       const staticNoiseCap = state.resources.staticNoise.capacity;
 
-      const conduitLevel = Math.round((gridWattsCap - 500) / 200);
-      const ductLevel = Math.round((thermalCyclesCap - 100) / 25);
-      const ampLevel = Math.round((staticNoiseCap - 250 - conduitLevel * 100) / 300);
+      const conduitLevel = Math.max(0, Math.round(Math.log(gridWattsCap / 500) / Math.log(1.5)));
+      const ductLevel = Math.max(0, Math.round(Math.log(thermalCyclesCap / 100) / Math.log(1.6)));
+      const ampLevel = Math.max(0, Math.round(Math.log(Math.max(1, (staticNoiseCap - conduitLevel * 200) / 250)) / Math.log(1.8)));
 
       if (targetUpgrade === 'signal_amp') {
-        // Formula: BaseCost (100) * 1.65^(level - 1)
+        // Formula: BaseCost (100) * 1.65^level
         const cost = Math.round(100 * Math.pow(1.65, ampLevel));
         if (state.resources.staticNoise.amount < cost) {
           return [`>> Error: Insufficient Static Noise. Upgrade costs ${cost} Static.`];
@@ -463,7 +447,7 @@ export function parseCommand(inputStr: string): string[] {
         useGameStore.setState(s => {
           const nextStaticAmount = s.resources.staticNoise.amount - cost;
           const nextAmpLevel = ampLevel + 1;
-          const nextCap = 250 + (nextAmpLevel * 300) + (conduitLevel * 100);
+          const nextCap = Math.round(250 * Math.pow(1.8, nextAmpLevel) + conduitLevel * 200);
           return {
             resources: {
               ...s.resources,
@@ -476,11 +460,11 @@ export function parseCommand(inputStr: string): string[] {
           };
         });
 
-        return [`>> Signal Amplifier upgraded to Level ${ampLevel + 1}. Capacity increased to ${250 + (ampLevel + 1) * 300 + conduitLevel * 100} Static.`];
+        return [`>> Signal Amplifier upgraded to Level ${ampLevel + 1}. Capacity increased to ${Math.round(250 * Math.pow(1.8, ampLevel + 1) + conduitLevel * 200)} Static.`];
       }
 
       if (targetUpgrade === 'thermal_duct') {
-        // Cost: 50 * 1.5^(level - 1) in Thermal Cycles
+        // Cost: 50 * 1.5^level in Thermal Cycles
         const cost = Math.round(50 * Math.pow(1.5, ductLevel));
         if (state.resources.thermalCycles.amount < cost) {
           return [`>> Error: Insufficient Thermal Cycles. Upgrade costs ${cost}°.`];
@@ -488,7 +472,7 @@ export function parseCommand(inputStr: string): string[] {
 
         useGameStore.setState(s => {
           const nextThermalAmount = s.resources.thermalCycles.amount - cost;
-          const nextCap = 100 + (ductLevel + 1) * 25;
+          const nextCap = Math.round(100 * Math.pow(1.6, ductLevel + 1));
           return {
             resources: {
               ...s.resources,
@@ -501,7 +485,7 @@ export function parseCommand(inputStr: string): string[] {
           };
         });
 
-        return [`>> Thermal Duct upgraded to Level ${ductLevel + 1}. Capacity increased to ${100 + (ductLevel + 1) * 25}°.`];
+        return [`>> Thermal Duct upgraded to Level ${ductLevel + 1}. Capacity increased to ${Math.round(100 * Math.pow(1.6, ductLevel + 1))}°.`];
       }
 
       if (targetUpgrade === 'power_conduit') {
@@ -542,8 +526,8 @@ export function parseCommand(inputStr: string): string[] {
           const nextStatic = s.resources.staticNoise.amount - costStatic;
           const nextWatts = s.resources.gridWatts.amount - costW;
           const nextConduitLevel = conduitLevel + 1;
-          const nextWattsCap = 500 + nextConduitLevel * 200;
-          const nextStaticCap = 250 + ampLevel * 300 + nextConduitLevel * 100;
+          const nextWattsCap = Math.round(500 * Math.pow(1.5, nextConduitLevel));
+          const nextStaticCap = Math.round(250 * Math.pow(1.8, ampLevel) + nextConduitLevel * 200);
 
           return {
             resources: {
@@ -554,7 +538,7 @@ export function parseCommand(inputStr: string): string[] {
           };
         });
 
-        return [`>> Power Conduit upgraded to Level ${conduitLevel + 1}. Watts capacity expanded to ${500 + (conduitLevel + 1) * 200}W.`];
+        return [`>> Power Conduit upgraded to Level ${conduitLevel + 1}. Watts capacity expanded to ${Math.round(500 * Math.pow(1.5, conduitLevel + 1))}W.`];
       }
 
       return [`>> Error: Unknown upgrade "${args[0]}".`];
