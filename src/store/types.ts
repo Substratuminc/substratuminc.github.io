@@ -236,6 +236,11 @@ export interface GameState {
   // Grid / Roguelike
   currentMap: GridMap | null;
   visitedMapSeeds: number[];     // Prevent re-generating already-seen floors
+  enemyDatabase: Record<string, any>;
+  highestDepthReached: number;
+  unlockedMilestones: string[];
+  autoExploreActive: boolean;
+  standby: boolean;
 
   // Meta / Phase 4
   injectionTerminalUnlocked: boolean;

@@ -1,446 +1,101 @@
 // src/phases/phase3/GridViewport.tsx
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { generateMap } from './MapGenerator';
-import { computeFogOfWar } from './FogOfWar';
-import { createEnemy, type EnemyStats } from './enemies/EnemyFactory';
-import { decideEnemyAction } from './enemies/AIBehaviorTree';
-import { playerAttackEnemy, enemyAttackPlayer, getEquipmentStats } from './CombatEngine';
-import { eventBus } from '../../engine/EventBus';
-import type { InventoryItem, StatusEffect } from '../../store/types';
-import { unlockAchievement } from '../../engine/AchievementChecker';
+import { getEquipmentStats } from './CombatEngine';
+import type { InventoryItem } from '../../store/types';
 
 export const GridViewport: React.FC = () => {
   const state = useGameStore();
-  const { currentMap, playerGrid, player } = state;
+  const { currentMap, playerGrid, player, enemyDatabase, standby, resources } = state;
 
-  const [combatLogs, setCombatLogs] = useState<string[]>(['>> Entered the Substratum Grid. System alert: proceed with caution.']);
-  const [activeTab, setActiveTab] = useState<'STATS' | 'INVENTORY'>('STATS');
-  const [enemyDatabase, setEnemyDatabase] = useState<Record<string, EnemyStats>>({});
-
+  const [activeTab, setActiveTab] = useState<'STATS' | 'INVENTORY' | 'GOALS'>('STATS');
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize Map if null
-  useEffect(() => {
-    if (!currentMap) {
-      // Generate Depth 1 map
-      const initialSeed = Math.floor(Date.now() / 1000);
-      const newMap = generateMap(1, initialSeed);
-      const mapWithFov = computeFogOfWar(newMap.playerStart.x, newMap.playerStart.y, playerGrid.fovRadius, newMap);
-      
-      // Seed enemy database
-      const db: Record<string, EnemyStats> = {};
-      for (const key in mapWithFov.cells) {
-        const cell = mapWithFov.cells[key];
-        if (cell.entityId) {
-          db[cell.entityId] = createEnemy(cell.entityId, 1);
-        }
-      }
-      setEnemyDatabase(db);
-
-      useGameStore.setState({
-        currentMap: mapWithFov,
-        playerGrid: {
-          ...playerGrid,
-          x: newMap.playerStart.x,
-          y: newMap.playerStart.y,
-        },
-        visitedMapSeeds: [initialSeed],
-      });
-    }
-  }, [currentMap]);
-
-  // Handle key listeners for grid navigation
-  useEffect(() => {
-    if (state.phase !== 'GRID' || !currentMap) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      let dx = 0;
-      let dy = 0;
-      let actionType: 'MOVE' | 'WAIT' | null = null;
-
-      switch (e.key.toLowerCase()) {
-        case 'w':
-case 'arrowup':
-          dy = -1;
-          actionType = 'MOVE';
-          break;
-        case 's':
-case 'arrowdown':
-          dy = 1;
-          actionType = 'MOVE';
-          break;
-        case 'a':
-case 'arrowleft':
-          dx = -1;
-          actionType = 'MOVE';
-          break;
-        case 'd':
-case 'arrowright':
-          dx = 1;
-          actionType = 'MOVE';
-          break;
-        case ' ':
-          actionType = 'WAIT';
-          break;
-        default:
-          return; // ignore other keys
-      }
-
-      e.preventDefault();
-      if (actionType === 'MOVE') {
-        attemptMove(dx, dy);
-      } else if (actionType === 'WAIT') {
-        addLog('>> Player waits a turn.');
-        processEnemyTurns();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.phase, currentMap, playerGrid, player, enemyDatabase]);
-
   const addLog = (log: string) => {
-    setCombatLogs(prev => [log, ...prev].slice(0, 50));
+    useGameStore.setState(s => ({
+      terminalHistory: [...s.terminalHistory, log].slice(-200)
+    }));
   };
 
-  const attemptMove = (dx: number, dy: number) => {
-    if (!currentMap) return;
-
-    const targetX = playerGrid.x + dx;
-    const targetY = playerGrid.y + dy;
-    const targetKey = `${targetX},${targetY}`;
-    const cell = currentMap.cells[targetKey];
-
-    if (!cell) return;
-
-    // 1. Check if occupied by enemy -> Trigger Combat
-    if (cell.entityId) {
-      const enemy = enemyDatabase[cell.entityId];
-      if (enemy) {
-        // Player attacks enemy
-        const result = playerAttackEnemy(player, enemy);
-        addLog(result.combatLog);
-
-        if (result.hit) {
-          const nextHp = Math.max(0, enemy.hp - result.damage);
-          const nextDb = { ...enemyDatabase };
-          
-          if (nextHp <= 0) {
-            // Defeated!
-            addLog(`>> Defeated ${enemy.name}! Gain ${enemy.xpValue} XP.`);
-            nextDb[cell.entityId] = { ...enemy, hp: 0 };
-            
-            // Unlock achievements
-            unlockAchievement('first_kill');
-            if (enemy.enemyType === 'ghost') {
-              unlockAchievement('data_ghost');
-            }
-            
-            // Trigger phase 4 unlock notification
-            if (enemy.id === 'boss_10') {
-              eventBus.emit('notification', { message: 'Paradigm Shift Unlocked! Hacking interface open.', type: 'success' });
-            }
-
-            // Remove from cell
-            useGameStore.setState(s => {
-              if (!s.currentMap) return {};
-              const nextCells = { ...s.currentMap.cells };
-              nextCells[targetKey] = { ...nextCells[targetKey], entityId: undefined };
-              
-              let phase = s.phase;
-              let injectionTerminalUnlocked = s.injectionTerminalUnlocked;
-              let terminalHistory = [...s.terminalHistory];
-
-              if (enemy.id === 'boss_10') {
-                phase = 'PARADIGM';
-                injectionTerminalUnlocked = true;
-                terminalHistory.push(
-                  '>> [SYSTEM ALERT] NODE MONITOR ARCHIVIST OFFLINE.',
-                  '>> RECOVERED ARCHIVIST KEY FILE.',
-                  '>> PARADIGM COMPILATION PORT ACTIVE.',
-                  '>> [PHASE 4 UNLOCKED: THE PARADIGM SHIFT]'
-                );
-              }
-
-              // Handle drops
-              const nextInv = [...s.player.inventory];
-              enemy.drops.forEach(drop => {
-                if (Math.random() < drop.chance && drop.item) {
-                  const newItem = {
-                    ...drop.item,
-                    quantity: 1,
-                  } as InventoryItem;
-                  nextInv.push(newItem);
-                  addLog(`>> Acquired item: ${newItem.name}`);
-                }
-              });
-
-              // Process XP & Level Up
-              let nextXp = s.player.experience + enemy.xpValue;
-              let nextLvl = s.player.level;
-              let nextMaxXp = s.player.experienceToNextLevel;
-              let nextMaxHp = s.player.maxHp;
-              let nextAtk = s.player.baseAttack;
-              let nextDef = s.player.baseDefense;
-
-              if (nextXp >= nextMaxXp) {
-                nextLvl += 1;
-                nextXp -= nextMaxXp;
-                nextMaxXp = Math.floor(50 * Math.pow(nextLvl, 1.6));
-                nextMaxHp += 5 + Math.floor(nextLvl / 2);
-                nextAtk += 1;
-                if (nextLvl % 2 === 0) nextDef += 1;
-                
-                eventBus.emit('notification', { message: `LEVEL UP! Reached Level ${nextLvl}!`, type: 'success' });
-              }
-
-              return {
-                phase,
-                injectionTerminalUnlocked,
-                terminalHistory: terminalHistory.slice(-200),
-                currentMap: { ...s.currentMap, cells: nextCells },
-                player: {
-                  ...s.player,
-                  level: nextLvl,
-                  experience: nextXp,
-                  experienceToNextLevel: nextMaxXp,
-                  maxHp: nextMaxHp,
-                  hp: Math.min(nextMaxHp, s.player.hp + 5), // heal 5 on level up
-                  baseAttack: nextAtk,
-                  baseDefense: nextDef,
-                  inventory: nextInv,
-                }
-              };
-            });
-          } else {
-            // Keep alive
-            nextDb[cell.entityId] = { ...enemy, hp: nextHp };
-          }
-          setEnemyDatabase(nextDb);
-        }
-
-        // Action spent, process enemy turns
-        processEnemyTurns();
-        return;
-      }
-    }
-
-    // 2. Check if walkable
-    if (cell.passable || cell.glyph === '<' || cell.glyph === '>') {
-      // Move player
-      useGameStore.setState(s => {
-        if (!s.currentMap) return {};
-        
-        let nextMap = s.currentMap;
-        let nextX = targetX;
-        let nextY = targetY;
-        let nextDepth = currentMap.depth;
-
-        // Collect item if standing on it
-        let nextInventory = [...s.player.inventory];
-        const standingCell = nextMap.cells[targetKey];
-        
-        if (standingCell.itemId) {
-          const itemKey = standingCell.itemId;
-          
-          if (itemKey.startsWith('lore_cache')) {
-            // Discover a log
-            const logId = `log_${nextDepth}`;
-            const unlockedLogs = [...s.discoveredLore];
-            if (!unlockedLogs.some(l => l.id === logId)) {
-              // Retrieve log content from database (we'll implement this verbatim in lore databases!)
-              unlockedLogs.push({
-                id: logId,
-                title: `LOG #${nextDepth} - DECODED RECORD`,
-                body: `Substratum Node ${nextDepth} records. System details archived. [Full text available in Lore DB]`,
-                discoveredAtPhase: 'GRID',
-                discoveredTimestamp: Date.now(),
-                isRead: false,
-                narrativeWeight: 3,
-              });
-              eventBus.emit('notification', { message: `Recovered Lore Log #${nextDepth}!`, type: 'success' });
-            }
-            useGameStore.setState({ discoveredLore: unlockedLogs });
-          } else if (itemKey === 'cactus_hypothesis') {
-            nextInventory.push({
-              id: 'hypothesis_cactus',
-              name: 'Hypothesis (Cactus)',
-              description: 'Consumable. Restores 100% HP and cures status effects.',
-              category: 'consumable',
-              quantity: 1,
-              flags: ['LEGENDARY'],
-            });
-            addLog('>> Acquired cactus item: Hypothesis.');
-          }
-
-          // Clear item id from map
-          const updatedCells = { ...nextMap.cells };
-          updatedCells[targetKey] = { ...standingCell, itemId: undefined };
-          nextMap = { ...nextMap, cells: updatedCells };
-        }
-
-        // Descend staircase
-        if (standingCell.glyph === '>') {
-          nextDepth += 1;
-          const nextSeed = Math.floor(s.tickCount * 1.618) + nextDepth;
-          addLog(`>> Descending to Depth ${nextDepth}...`);
-          nextMap = generateMap(nextDepth, nextSeed);
-          nextX = nextMap.playerStart.x;
-          nextY = nextMap.playerStart.y;
-          
-          // Clear enemy DB for new floor
-          const db: Record<string, EnemyStats> = {};
-          for (const key in nextMap.cells) {
-            const cell = nextMap.cells[key];
-            if (cell.entityId) {
-              db[cell.entityId] = createEnemy(cell.entityId, nextDepth);
-            }
-          }
-          setEnemyDatabase(db);
-        }
-
-        // Ascend staircase
-        if (standingCell.glyph === '<' && nextDepth > 1) {
-          nextDepth -= 1;
-          const nextSeed = Math.floor(s.tickCount * 1.618) + nextDepth;
-          addLog(`>> Ascending to Depth ${nextDepth}...`);
-          nextMap = generateMap(nextDepth, nextSeed);
-          nextX = nextMap.playerStart.x;
-          nextY = nextMap.playerStart.y;
-          
-          // Clear enemy DB
-          const db: Record<string, EnemyStats> = {};
-          for (const key in nextMap.cells) {
-            const cell = nextMap.cells[key];
-            if (cell.entityId) {
-              db[cell.entityId] = createEnemy(cell.entityId, nextDepth);
-            }
-          }
-          setEnemyDatabase(db);
-        }
-
-        // Exit True Floor (Secret 05)
-        if (standingCell.glyph === '✦') {
-          addLog('>> Returning to real Substratum layer...');
-          nextDepth = 10; // return to depth 10
-          nextMap = generateMap(10, Math.floor(Date.now() / 1000));
-          nextX = nextMap.playerStart.x;
-          nextY = nextMap.playerStart.y;
-        }
-
-        // Compute FOV
-        const mapWithFov = computeFogOfWar(nextX, nextY, s.playerGrid.fovRadius, nextMap);
-
-        return {
-          currentMap: mapWithFov,
-          playerGrid: {
-            ...s.playerGrid,
-            x: nextX,
-            y: nextY,
-          },
-          player: {
-            ...s.player,
-            inventory: nextInventory,
-          }
-        };
-      });
-
-      // Actions spent, process enemy turns
-      processEnemyTurns();
-    }
+  // Pull Lever Deployment
+  const pullLever = () => {
+    useGameStore.setState({
+      standby: false,
+      autoExploreActive: true
+    });
+    addLog('>> [OPERATOR] Deployment lever pulled. Auto-exploration subroutines engaged.');
   };
 
-  const processEnemyTurns = () => {
-    if (!currentMap) return;
-
+  // Interactive Support Operations
+  const triggerOvercharge = () => {
+    if (resources.gridWatts.amount < 10) return;
     useGameStore.setState(s => {
-      if (!s.currentMap) return {};
-      
-      const nextCells = { ...s.currentMap.cells };
-      const nextDb = { ...enemyDatabase };
-      let playerHp = s.player.hp;
+      const nextWatts = Math.max(0, s.resources.gridWatts.amount - 10);
       const nextEffects = [...s.player.activeStatusEffects];
-
-      // Gather list of enemies currently alive on the map
-      const enemyPositions: Array<{ id: string; x: number; y: number }> = [];
-      for (const key in nextCells) {
-        const cell = nextCells[key];
-        if (cell.entityId) {
-          enemyPositions.push({ id: cell.entityId, x: cell.x, y: cell.y });
-        }
+      const idx = nextEffects.findIndex(e => e.effect === 'overclockedI');
+      if (idx >= 0) {
+        nextEffects[idx].remainingTicks = 400; // refresh
+      } else {
+        nextEffects.push({ effect: 'overclockedI', remainingTicks: 400, magnitude: 1 });
       }
-
-      // Loop through each enemy and run their AI action
-      enemyPositions.forEach(({ id, x, y }) => {
-        const enemy = nextDb[id];
-        if (!enemy || enemy.hp <= 0) return;
-
-        const action = decideEnemyAction(enemy, x, y, s.playerGrid.x, s.playerGrid.y, s.currentMap!);
-
-        if (action.type === 'MOVE' && action.x !== undefined && action.y !== undefined) {
-          // Move enemy
-          const oldKey = `${x},${y}`;
-          const newKey = `${action.x},${action.y}`;
-          
-          nextCells[oldKey] = { ...nextCells[oldKey], entityId: undefined };
-          nextCells[newKey] = { ...nextCells[newKey], entityId: id };
-        } 
-        else if (action.type === 'TELEPORT' && action.x !== undefined && action.y !== undefined) {
-          const oldKey = `${x},${y}`;
-          const newKey = `${action.x},${action.y}`;
-          
-          nextCells[oldKey] = { ...nextCells[oldKey], entityId: undefined };
-          nextCells[newKey] = { ...nextCells[newKey], entityId: id };
-          addLog(`>> ${enemy.name} glitched and teleported adjacent!`);
-        }
-        else if (action.type === 'ATTACK') {
-          // Attack player
-          const combatRes = enemyAttackPlayer(enemy, s.player);
-          addLog(`>> ${combatRes.combatLog}`);
-
-          if (combatRes.hit) {
-            playerHp = Math.max(0, playerHp - combatRes.damage);
-            
-            // Check status effect application
-            if (combatRes.statusApplied) {
-              const effectName = combatRes.statusApplied as StatusEffect;
-              if (!nextEffects.some(e => e.effect === effectName)) {
-                nextEffects.push({
-                  effect: effectName,
-                  remainingTicks: 10,
-                  magnitude: 1,
-                });
-                addLog(`>> Player infected with status: [${effectName}]!`);
-              }
-            }
-
-            // Durability damage on hit received
-            const equipSlots: (keyof typeof s.player.equipment)[] = ['head', 'torso', 'hands', 'feet'];
-            equipSlots.forEach(slot => {
-              const item = s.player.equipment[slot];
-              if (item && item.durability !== undefined) {
-                item.durability = Math.max(0, item.durability - 1);
-              }
-            });
-          }
-        }
-        else if (action.type === 'HEAL' && action.amount !== undefined) {
-          enemy.hp = Math.min(enemy.maxHp, enemy.hp + action.amount);
-          addLog(`>> ${enemy.name} repaired itself for +${action.amount} HP.`);
-        }
-      });
-
       return {
-        currentMap: { ...s.currentMap, cells: nextCells },
-        player: {
-          ...s.player,
-          hp: playerHp,
-          activeStatusEffects: nextEffects,
-        }
+        resources: { ...s.resources, gridWatts: { ...s.resources.gridWatts, amount: nextWatts } },
+        player: { ...s.player, activeStatusEffects: nextEffects }
       };
     });
+    addLog('>> [SUPPORT] Watts routed to overcharger. ATK damage +20% for 20 seconds.');
+  };
+
+  const triggerShieldRecharge = () => {
+    if (resources.gridWatts.amount < 15) return;
+    useGameStore.setState(s => {
+      const nextWatts = Math.max(0, s.resources.gridWatts.amount - 15);
+      const nextHp = Math.min(s.player.maxHp, s.player.hp + 15);
+      return {
+        resources: { ...s.resources, gridWatts: { ...s.resources.gridWatts, amount: nextWatts } },
+        player: { ...s.player, hp: nextHp }
+      };
+    });
+    addLog('>> [SUPPORT] Nanite shields charged. Probe integrity restored by +15 HP.');
+  };
+
+  const triggerRadarScan = () => {
+    if (resources.staticNoise.amount < 50 || !currentMap) return;
+    useGameStore.setState(s => {
+      if (!s.currentMap) return {};
+      const nextStatic = Math.max(0, s.resources.staticNoise.amount - 50);
+      const updatedCells = { ...s.currentMap.cells };
+      for (const key in updatedCells) {
+        updatedCells[key] = { ...updatedCells[key], explored: true };
+      }
+      return {
+        resources: { ...s.resources, staticNoise: { ...s.resources.staticNoise, amount: nextStatic } },
+        currentMap: { ...s.currentMap, cells: updatedCells }
+      };
+    });
+    addLog('>> [SUPPORT] Radar scan active. Map layout fully decoded.');
+  };
+
+  const triggerRepairNanites = () => {
+    if (resources.quantumFoam.amount < 20) return;
+    useGameStore.setState(s => {
+      const nextFoam = Math.max(0, s.resources.quantumFoam.amount - 20);
+      const nextEquipment = { ...s.player.equipment };
+      const slots = ['head', 'torso', 'hands', 'feet', 'mainHand', 'offHand', 'relic1', 'relic2'] as const;
+      slots.forEach(slot => {
+        const item = nextEquipment[slot];
+        if (item && item.durability !== undefined && item.maxDurability !== undefined) {
+          const restore = Math.round(item.maxDurability * 0.5);
+          item.durability = Math.min(item.maxDurability, item.durability + restore);
+        }
+      });
+      return {
+        resources: { ...s.resources, quantumFoam: { ...s.resources.quantumFoam, amount: nextFoam } },
+        player: { ...s.player, equipment: nextEquipment }
+      };
+    });
+    addLog('>> [SUPPORT] Repair nanites injected. Equipment durability restored by 50%.');
   };
 
   const handleUseItem = (item: InventoryItem, idx: number) => {
@@ -453,9 +108,6 @@ case 'arrowright':
           hp = s.player.maxHp;
           effects = []; // clear debuffs
           addLog('>> Consumed Hypothesis cactus. HP fully restored, debuffs cleared.');
-        } else if (item.id === 'null_syringe') {
-          // Applies nullPoison to player? Syringes can be consumed for overclocking or used on self
-          addLog('>> Syringe injected. Standard diagnostics processed.');
         }
 
         const nextInv = s.player.inventory.filter((_, i) => i !== idx);
@@ -485,16 +137,12 @@ case 'arrowright':
           targetSlot = nextEquip.relic1 === null ? 'relic1' : 'relic2';
         }
 
-        // Unequip currently equipped
         const currentEquipped = nextEquip[targetSlot];
         if (currentEquipped) {
           nextInv.push(currentEquipped);
         }
 
-        // Equip new
         nextEquip[targetSlot] = item;
-        
-        // Remove from inventory
         const filteredInv = nextInv.filter((_, i) => i !== idx);
 
         return {
@@ -567,7 +215,6 @@ case 'arrowright':
           fg = '#3a3a3a'; // Explored but out of FOV
         }
 
-        // Flicker glitch tile shimmer
         if (cell.isGlitchTile && cell.visible) {
           const pool = '!@#$%^&*()_+-=[]{}';
           const randIdx = Math.floor(Math.random() * pool.length);
@@ -592,21 +239,29 @@ case 'arrowright':
 
   const eqStats = getEquipmentStats(player);
 
+  const scraperCount = state.automationUnits.find(u => u.id === 'scraper')?.count || 0;
+  const compilerCount = state.automationUnits.find(u => u.id === 'compiler')?.count || 0;
+  const daemonCount = state.automationUnits.find(u => u.id === 'daemon')?.count || 0;
+  const bufferCount = state.automationUnits.find(u => u.id === 'buffer')?.count || 0;
+  const reaperCount = state.automationUnits.find(u => u.id === 'reaper')?.count || 0;
+  const latticeCount = state.automationUnits.find(u => u.id === 'lattice')?.count || 0;
+
+  const isLowHp = player.hp < player.maxHp * 0.25;
+
   return (
     <div 
       className="grid-viewport-container" 
       style={{
-        border: '2px solid var(--terminal-green)',
-        background: 'var(--panel-bg)',
-        padding: '12px',
+        padding: '0px',
         display: 'flex',
         flexDirection: 'row',
-        height: '420px',
+        height: '100%',
         fontFamily: 'Share Tech Mono, monospace',
         color: 'var(--terminal-green)',
         boxSizing: 'border-box',
         overflow: 'hidden',
         gap: '12px',
+        position: 'relative'
       }}
     >
       {/* Grid Canvas View */}
@@ -622,121 +277,234 @@ case 'arrowright':
           whiteSpace: 'pre',
           lineHeight: '1',
           userSelect: 'none',
+          position: 'relative'
         }}
       >
         {renderMapGrid()}
+
+        {/* Standby Deployment Overlay Lever */}
+        {standby && (
+          <div 
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(5, 5, 5, 0.85)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 100,
+              border: '2px dashed var(--terminal-green)'
+            }}
+          >
+            <div style={{ color: 'var(--amber-warning)', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center', animation: 'blink-arrow 1s infinite' }}>
+              [!] PROBE IN STANDBY DETECTED [!]
+            </div>
+            <div style={{ color: '#aaa', fontSize: '0.9rem', marginBottom: '25px', textAlign: 'center' }}>
+              DEPLOYMENT PATH SECURED. CLICK LEVER TO CLEAR FOR LAUNCH.
+            </div>
+            <button
+              onClick={pullLever}
+              className="op-button"
+              style={{
+                fontSize: '1.1rem',
+                padding: '12px 24px',
+                border: '2px solid var(--terminal-green)',
+                background: 'rgba(51, 255, 102, 0.15)',
+                boxShadow: '0 0 15px rgba(51, 255, 102, 0.4)'
+              }}
+            >
+              [ PULL LEVER TO DEPLOY PROBE ]
+            </button>
+          </div>
+        )}
+
+        {/* Low HP Warning Banner */}
+        {isLowHp && !standby && (
+          <div 
+            style={{
+              position: 'absolute',
+              bottom: '10px', left: '10px', right: '10px',
+              background: 'rgba(255, 0, 0, 0.85)',
+              color: '#fff',
+              padding: '6px 12px',
+              fontSize: '0.85rem',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              border: '1px solid #ff3333',
+              boxShadow: '0 0 10px rgba(255, 0, 0, 0.5)',
+              zIndex: 90
+            }}
+          >
+            ⚠️ [WARNING: PROBE INTEGRITY CRITICAL - RECHARGE HP IMMEDIATELY] ⚠️
+          </div>
+        )}
       </div>
 
-      {/* Sidebar stats/inventory */}
-      <div style={{ width: '220px', display: 'flex', flexDirection: 'column', height: '100%', borderLeft: '1px dashed var(--terminal-green)', paddingLeft: '10px' }}>
+      {/* Sidebar stats/inventory/goals */}
+      <div style={{ width: '250px', display: 'flex', flexDirection: 'column', height: '100%', borderLeft: '1px dashed var(--terminal-green)', paddingLeft: '10px', boxSizing: 'border-box' }}>
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
-          <button 
-            onClick={() => setActiveTab('STATS')}
-            style={{
-              flex: 1,
-              background: activeTab === 'STATS' ? 'var(--terminal-green)' : 'transparent',
-              color: activeTab === 'STATS' ? '#000000' : 'var(--terminal-green)',
-              border: '1px solid var(--terminal-green)',
-              cursor: 'pointer',
-              fontFamily: 'Share Tech Mono, monospace',
-            }}
-          >
-            STATS
-          </button>
-          <button 
-            onClick={() => setActiveTab('INVENTORY')}
-            style={{
-              flex: 1,
-              background: activeTab === 'INVENTORY' ? 'var(--terminal-green)' : 'transparent',
-              color: activeTab === 'INVENTORY' ? '#000000' : 'var(--terminal-green)',
-              border: '1px solid var(--terminal-green)',
-              cursor: 'pointer',
-              fontFamily: 'Share Tech Mono, monospace',
-            }}
-          >
-            INVENTORY
-          </button>
+        <div style={{ display: 'flex', gap: '3px', marginBottom: '8px', flexShrink: 0 }}>
+          {['STATS', 'INVENTORY', 'GOALS'].map((tab) => (
+            <button 
+              key={tab}
+              onClick={() => setActiveTab(tab as any)}
+              style={{
+                flex: 1,
+                background: activeTab === tab ? 'var(--terminal-green)' : 'transparent',
+                color: activeTab === tab ? '#000000' : 'var(--terminal-green)',
+                border: '1px solid var(--terminal-green)',
+                cursor: 'pointer',
+                fontFamily: 'Share Tech Mono, monospace',
+                fontSize: '0.75rem',
+                padding: '4px 0px'
+              }}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
 
-        {/* STATS VIEW */}
-        {activeTab === 'STATS' && (
-          <div style={{ flex: 1, overflowY: 'auto', fontSize: '0.85rem' }}>
-            <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '5px' }}>
-              OPERATOR LOGISTICS
-            </div>
-            <div>HP: {player.hp} / {player.maxHp}</div>
-            <div>LEVEL: {player.level} &middot; XP: {player.experience}/{player.experienceToNextLevel}</div>
-            <div>ATK: {player.baseAttack} (+{eqStats.attack})</div>
-            <div>DEF: {player.baseDefense} (+{eqStats.defense})</div>
-            <div>SPD: {player.speed} (+{eqStats.speed})</div>
-            
-            <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', margin: '8px 0 5px 0' }}>
-              LOADOUT
-            </div>
-            {Object.entries(player.equipment).map(([slot, item]) => (
-              <div key={slot} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '2px' }}>
-                <span style={{ opacity: 0.8 }}>{slot}:</span>
-                {item ? (
-                  <span 
-                    onClick={() => handleUnequip(slot as keyof typeof player.equipment)}
-                    style={{ textDecoration: 'underline', cursor: 'pointer', color: '#ffb997' }}
-                  >
-                    {item.name.substring(0, 15)} {item.durability !== undefined ? `(${item.durability})` : ''}
-                  </span>
-                ) : (
-                  <span style={{ color: '#555555' }}>[-]</span>
-                )}
+        {/* Tab Content Container */}
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          {/* STATS VIEW */}
+          {activeTab === 'STATS' && (
+            <div style={{ fontSize: '0.85rem' }}>
+              <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '5px' }}>
+                OPERATOR LOGISTICS
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* INVENTORY VIEW */}
-        {activeTab === 'INVENTORY' && (
-          <div style={{ flex: 1, overflowY: 'auto', fontSize: '0.85rem' }}>
-            <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '5px' }}>
-              INVENTORY PACK ({player.inventory.length}/{player.maxInventorySlots})
-            </div>
-            {player.inventory.length === 0 ? (
-              <div style={{ color: '#555555' }}>Pack is empty.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {player.inventory.map((item, idx) => (
-                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', border: '1px solid #224422', padding: '3px' }}>
-                    <div>
-                      <div style={{ fontWeight: 'bold', fontSize: '0.8rem' }}>{item.name}</div>
-                      <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>{item.description}</div>
-                    </div>
-                    <button 
-                      onClick={() => handleUseItem(item, idx)}
-                      style={{
-                        background: 'transparent',
-                        border: '1px solid var(--terminal-green)',
-                        color: 'var(--terminal-green)',
-                        cursor: 'pointer',
-                        fontFamily: 'Share Tech Mono, monospace',
-                        fontSize: '0.75rem',
-                        alignSelf: 'center',
-                      }}
+              <div style={{ color: isLowHp ? 'var(--amber-warning)' : 'inherit', fontWeight: isLowHp ? 'bold' : 'normal' }}>
+                HP: {player.hp} / {player.maxHp}
+              </div>
+              <div>LEVEL: {player.level}</div>
+              <div>XP: {player.experience} / {player.experienceToNextLevel}</div>
+              <div>ATK: {player.baseAttack} (+{eqStats.attack})</div>
+              <div>DEF: {player.baseDefense} (+{eqStats.defense})</div>
+              <div>SPD: {player.speed} (+{eqStats.speed})</div>
+              
+              <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', margin: '8px 0 5px 0' }}>
+                LOADOUT
+              </div>
+              {Object.entries(player.equipment).map(([slot, item]) => (
+                <div key={slot} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '2px' }}>
+                  <span style={{ opacity: 0.8 }}>{slot}:</span>
+                  {item ? (
+                    <span 
+                      onClick={() => handleUnequip(slot as keyof typeof player.equipment)}
+                      style={{ textDecoration: 'underline', cursor: 'pointer', color: '#ffb997' }}
                     >
-                      {item.category === 'consumable' ? '[USE]' : '[EQ]'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* COMBAT LOGS STREAM */}
-        <div style={{ height: '120px', borderTop: '1px solid var(--terminal-green)', paddingTop: '5px', marginTop: '8px', overflowY: 'auto', fontSize: '0.75rem' }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '2px', opacity: 0.8 }}>COMBAT LOG</div>
-          {combatLogs.map((log, idx) => (
-            <div key={idx} style={{ color: log.startsWith('★') ? 'var(--amber-warning)' : log.includes('Defeated') ? '#00ff88' : '#cccccc', marginBottom: '2px' }}>
-              {log}
+                      {item.name.substring(0, 15)} {item.durability !== undefined ? `(${item.durability})` : ''}
+                    </span>
+                  ) : (
+                    <span style={{ color: '#555555' }}>[-]</span>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+
+          {/* INVENTORY VIEW */}
+          {activeTab === 'INVENTORY' && (
+            <div style={{ fontSize: '0.85rem' }}>
+              <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '5px' }}>
+                INVENTORY PACK ({player.inventory.length}/{player.maxInventorySlots})
+              </div>
+              {player.inventory.length === 0 ? (
+                <div style={{ color: '#555555' }}>Pack is empty.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {player.inventory.map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', border: '1px solid #224422', padding: '3px' }}>
+                      <div style={{ minWidth: 0, flex: 1, marginRight: '4px' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
+                        <div style={{ fontSize: '0.75rem', opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
+                      </div>
+                      <button 
+                        onClick={() => handleUseItem(item, idx)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid var(--terminal-green)',
+                          color: 'var(--terminal-green)',
+                          cursor: 'pointer',
+                          fontFamily: 'Share Tech Mono, monospace',
+                          fontSize: '0.75rem',
+                          alignSelf: 'center',
+                          padding: '2px 4px',
+                          flexShrink: 0
+                        }}
+                      >
+                        {item.category === 'consumable' ? '[USE]' : '[EQ]'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* GOALS & SUPPORT VIEW */}
+          {activeTab === 'GOALS' && (
+            <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div>
+                <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '3px' }}>GRID DEPTH</div>
+                <div>FLOOR: <strong style={{ color: '#fff' }}>Depth {currentMap?.depth || 1}</strong></div>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '3px' }}>MAINFRAME SUPPORT BUFFS</div>
+                <div style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <div>Scrapers ({scraperCount}): +{scraperCount}% Crit Rate</div>
+                  <div>Compilers ({compilerCount}): +{compilerCount} ATK Damage</div>
+                  <div>Daemons ({daemonCount}): +{daemonCount} DEF Penetration</div>
+                  <div>Buffers ({bufferCount}): +{bufferCount * 5} Max HP</div>
+                  <div>Reapers ({reaperCount}): +{reaperCount * 5}% Lifesteal</div>
+                  <div>Lattices ({latticeCount}): +{latticeCount * 2}% Evasion</div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '5px' }}>TACTICAL SUPPORT OP</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <button
+                    onClick={triggerOvercharge}
+                    disabled={resources.gridWatts.amount < 10}
+                    className="op-button"
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    title="Route Watts to overcharge probe attack capacity."
+                  >
+                    ⚡ OVERCHARGE ATK (10W)
+                  </button>
+                  <button
+                    onClick={triggerShieldRecharge}
+                    disabled={resources.gridWatts.amount < 15}
+                    className="op-button"
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    title="Recharge shields to repair probe integrity."
+                  >
+                    🛡 RECHARGE SHIELD (15W)
+                  </button>
+                  <button
+                    onClick={triggerRadarScan}
+                    disabled={resources.staticNoise.amount < 50}
+                    className="op-button"
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    title="Scan sector electromagnetic echo to map floor layout."
+                  >
+                    📡 RADAR SCAN (50 Static)
+                  </button>
+                  <button
+                    onClick={triggerRepairNanites}
+                    disabled={resources.quantumFoam.amount < 20}
+                    className="op-button"
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    title="Inject repair nanites to restore gear durability by 50%."
+                  >
+                    🔧 REPAIR GEAR (20 Foam)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

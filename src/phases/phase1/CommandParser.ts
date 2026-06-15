@@ -49,6 +49,7 @@ export function parseCommand(inputStr: string): string[] {
         '                                      - --full: vent to 0. Costs 3W. 5s cooldown.',
         '   scan_subsystem [--sector=<n>]      - Scan facility subsystems. Costs 15 Static, 5W.',
         '   reboot_node <node_id>              - Recover a failed automation node. Costs 50W, 20°.',
+        '   data_scrub                         - Scrub database corruption. Costs 30 Quantum Foam.',
         '   compile_fragment bootloader.key    - Compile recovery fragments into handshake key.',
         '   ping <ip_address>                  - Test connections (e.g. ping 192.168.0.1).',
         '   whoami                             - Query terminal operator identity.',
@@ -70,13 +71,18 @@ export function parseCommand(inputStr: string): string[] {
         return [`>> Cooldown active. Wait ${remaining}s.`];
       }
 
+      const conduitLevel = Math.max(0, Math.round(Math.log(state.resources.gridWatts.capacity / 500) / Math.log(1.5)));
+      const ampLevel = Math.max(0, Math.round(Math.log(Math.max(1, (state.resources.staticNoise.capacity - conduitLevel * 200) / 250)) / Math.log(1.8)));
+      const normalYield = Math.round(8 * Math.pow(1.5, ampLevel));
+      const boostYield = Math.round(20 * Math.pow(1.5, ampLevel));
+
       if (isBoost) {
         if (state.resources.gridWatts.amount < 5) {
           return ['>> Error: Insufficient Watts. Boost requires 5W.'];
         }
         cooldowns[cooldownKey] = now;
         useGameStore.setState(s => {
-          const nextStatic = Math.min(s.resources.staticNoise.capacity, s.resources.staticNoise.amount + 20);
+          const nextStatic = Math.min(s.resources.staticNoise.capacity, s.resources.staticNoise.amount + boostYield);
           const nextWatts = Math.max(0, s.resources.gridWatts.amount - 5);
           return {
             resources: {
@@ -86,11 +92,11 @@ export function parseCommand(inputStr: string): string[] {
             },
           };
         });
-        return ['>> Antenna array boosted. +20 Static Noise collected. (-5W)'];
+        return [`>> Antenna array boosted. +${boostYield} Static Noise collected. (-5W)`];
       } else {
         cooldowns[cooldownKey] = now;
         useGameStore.setState(s => {
-          const nextStatic = Math.min(s.resources.staticNoise.capacity, s.resources.staticNoise.amount + 8);
+          const nextStatic = Math.min(s.resources.staticNoise.capacity, s.resources.staticNoise.amount + normalYield);
           return {
             resources: {
               ...s.resources,
@@ -98,7 +104,7 @@ export function parseCommand(inputStr: string): string[] {
             },
           };
         });
-        return ['>> Antenna array active. +8 Static Noise collected.'];
+        return [`>> Antenna array active. +${normalYield} Static Noise collected.`];
       }
     }
 
@@ -111,9 +117,12 @@ export function parseCommand(inputStr: string): string[] {
         return [`>> Cooldown active. Wait ${remaining}s.`];
       }
 
+      const conduitLevel = Math.max(0, Math.round(Math.log(state.resources.gridWatts.capacity / 500) / Math.log(1.5)));
+      const yieldAmt = Math.round(40 * Math.pow(1.3, conduitLevel));
+
       cooldowns[cooldownKey] = now;
       useGameStore.setState(s => {
-        const nextWatts = Math.min(s.resources.gridWatts.capacity, s.resources.gridWatts.amount + 40);
+        const nextWatts = Math.min(s.resources.gridWatts.capacity, s.resources.gridWatts.amount + yieldAmt);
         return {
           resources: {
             ...s.resources,
@@ -121,7 +130,7 @@ export function parseCommand(inputStr: string): string[] {
           },
         };
       });
-      return ['>> Grid recovery subroutines active. +40 Watts generated.'];
+      return [`>> Grid recovery subroutines active. +${yieldAmt} Watts generated.`];
     }
 
     case 'vent_heat': {
@@ -133,6 +142,9 @@ export function parseCommand(inputStr: string): string[] {
         const remaining = ((cooldownDuration - (now - cooldowns[cooldownKey])) / 1000).toFixed(1);
         return [`>> Cooldown active. Wait ${remaining}s.`];
       }
+
+      const ductLevel = Math.max(0, Math.round(Math.log(state.resources.thermalCycles.capacity / 100) / Math.log(1.6)));
+      const normalVent = Math.round(12 * Math.pow(1.4, ductLevel));
 
       if (isFull) {
         if (state.resources.gridWatts.amount < 3) {
@@ -153,7 +165,7 @@ export function parseCommand(inputStr: string): string[] {
       } else {
         cooldowns[cooldownKey] = now;
         useGameStore.setState(s => {
-          const nextThermal = Math.max(0, s.resources.thermalCycles.amount - 12);
+          const nextThermal = Math.max(0, s.resources.thermalCycles.amount - normalVent);
           return {
             resources: {
               ...s.resources,
@@ -161,7 +173,7 @@ export function parseCommand(inputStr: string): string[] {
             },
           };
         });
-        return ['>> Duct valve opened. -12 Thermal Cycles vented.'];
+        return [`>> Duct valve opened. -${normalVent} Thermal Cycles vented.`];
       }
     }
 
@@ -269,6 +281,38 @@ export function parseCommand(inputStr: string): string[] {
       unlockAchievement('first_reboot');
 
       return [`>> Node "${unit.name}" rebooted successfully. Output restored.`];
+    }
+
+    case 'data_scrub': {
+      if (state.resources.quantumFoam.amount < 30) {
+        return ['>> Error: Insufficient Quantum Foam. Data scrubbing requires 30 Foam.'];
+      }
+
+      useGameStore.setState(s => {
+        const nextFoam = Math.max(0, s.resources.quantumFoam.amount - 30);
+        // Also reboot Reaper.exe node if it has a CORRUPTION failure state
+        const nextUnits = s.automationUnits.map(u => {
+          if (u.id === 'reaper' && u.failureState?.type === 'CORRUPTION') {
+            return { ...u, failureState: null, failureCooldownTicks: 0 };
+          }
+          return u;
+        });
+
+        // Sync failures array
+        const nextFailures = nextUnits.map(u => u.failureState).filter(Boolean) as any[];
+
+        return {
+          automationUnits: nextUnits,
+          activeFailures: nextFailures,
+          resources: {
+            ...s.resources,
+            quantumFoam: { ...s.resources.quantumFoam, amount: nextFoam },
+            corruptedData: { ...s.resources.corruptedData, amount: 0 },
+          },
+        };
+      });
+
+      return ['>> Database scrubbing completed. Corrupted Data purged to 0.'];
     }
 
     case 'compile_fragment': {
@@ -489,12 +533,9 @@ export function parseCommand(inputStr: string): string[] {
       }
 
       if (targetUpgrade === 'power_conduit') {
-        // Power Conduit: 100W base. First purchase is free if Static > 500.
-        // Levels: 0->1: free if Static > 500.
-        // 1->2: 100W + 200 Static
-        // 2->3: 200W + 400 Static
-        // 3->4: 350W + 700 Static
-        // 4->5: 600W + 1200 Static
+        // Power Conduit cost scaling:
+        // Level 0->1: free if Static > 500
+        // Level N->N+1: 100 * 1.4^(N-1) Watts, 200 * 1.55^(N-1) Static
         let costW = 0;
         let costStatic = 0;
 
@@ -504,18 +545,9 @@ export function parseCommand(inputStr: string): string[] {
           }
           costStatic = 0; // free!
           costW = 0;
-        } else if (conduitLevel === 1) {
-          costW = 100;
-          costStatic = 200;
-        } else if (conduitLevel === 2) {
-          costW = 200;
-          costStatic = 400;
-        } else if (conduitLevel === 3) {
-          costW = 350;
-          costStatic = 700;
         } else {
-          costW = 600;
-          costStatic = 1200;
+          costW = Math.round(100 * Math.pow(1.4, conduitLevel - 1));
+          costStatic = Math.round(200 * Math.pow(1.55, conduitLevel - 1));
         }
 
         if (state.resources.staticNoise.amount < costStatic || state.resources.gridWatts.amount < costW) {

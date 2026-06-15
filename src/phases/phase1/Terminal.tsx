@@ -211,12 +211,12 @@ export const Terminal: React.FC = () => {
       className="terminal-view" 
       onClick={focusInput}
       style={{
-        border: '2px solid var(--terminal-green)',
-        background: 'var(--panel-bg)',
-        padding: '12px',
+        border: 'none',
+        background: 'transparent',
+        padding: '2px',
         display: 'flex',
         flexDirection: 'column',
-        height: '420px',
+        height: '100%',
         fontFamily: 'Share Tech Mono, monospace',
         fontSize: '0.95rem',
         cursor: 'text',

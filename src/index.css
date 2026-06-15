@@ -15,7 +15,8 @@ body {
   background-color: var(--bg-color);
   color: var(--text-color);
   font-family: 'Share Tech Mono', monospace;
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100vh;
 }
 
 /* CRT Scanline overlay */
@@ -38,12 +39,12 @@ body::after {
 }
 
 #root {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   animation: flicker 0.15s infinite;
   box-sizing: border-box;
-  padding: 20px;
+  overflow: hidden;
 }
 
 /* Scrollbars custom styling */
@@ -88,19 +89,23 @@ body::after {
   animation: flash-urgent 0.8s ease-in-out infinite;
 }
 
-/* Panel Layout grid */
+/* Panel Layout flex */
 .panels-grid {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: row;
   gap: 20px;
   width: 100%;
-  max-width: 1800px;
+  max-width: 100%;
   margin: 0 auto;
 }
 
-@media (min-width: 900px) {
+@media (max-width: 900px) {
   .panels-grid {
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    flex-direction: column !important;
+  }
+  .panels-grid > div {
+    flex: none !important;
+    width: 100% !important;
   }
 }
 
@@ -156,5 +161,22 @@ textarea:focus {
   background: rgba(255, 107, 53, 0.25);
   box-shadow: 0 0 12px rgba(255, 107, 53, 0.5);
   text-shadow: 0 0 5px var(--amber-warning);
+}
+
+@keyframes tab-glow {
+  0%, 100% { 
+    box-shadow: 0 0 2px var(--terminal-green); 
+    border-color: var(--terminal-green); 
+    color: var(--terminal-green); 
+  }
+  50% { 
+    box-shadow: 0 0 12px var(--amber-warning); 
+    border-color: var(--amber-warning); 
+    color: var(--amber-warning); 
+  }
+}
+
+.tab-blinking {
+  animation: tab-glow 1.2s infinite ease-in-out !important;
 }
 

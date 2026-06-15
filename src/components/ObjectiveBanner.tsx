@@ -36,12 +36,12 @@ export const ObjectiveBanner: React.FC = () => {
       conditionMet = true;
     }
 
-    subObjectives.push({ text: `Reach Signal Amplifier Level 3 (Current: Lv.${ampLevel})`, done: isAmp3 });
-    subObjectives.push({ text: `Unlock Power Conduit (Current: ${isConduit1 ? 'Unlocked' : 'Locked'})`, done: isConduit1 });
-    subObjectives.push({ text: `Reach Signal Amplifier Level 7 (Current: Lv.${ampLevel})`, done: isAmp7 });
-    subObjectives.push({ text: `Accumulate 300 Watts of stored power (Current: ${Math.floor(resources.gridWatts.amount)} / 300W)`, done: isWatts300 || isAmp7 });
+    subObjectives.push({ text: `Reach Signal Amplifier Level 3 (Current: Lv.${ampLevel}) — [SYSTEM tab]`, done: isAmp3 });
+    subObjectives.push({ text: `Unlock Power Conduit (Current: ${isConduit1 ? 'Unlocked' : 'Locked'}) — [SYSTEM tab]`, done: isConduit1 });
+    subObjectives.push({ text: `Reach Signal Amplifier Level 7 (Current: Lv.${ampLevel}) — [SYSTEM tab]`, done: isAmp7 });
+    subObjectives.push({ text: `Accumulate 300 Watts of stored power (Current: ${Math.floor(resources.gridWatts.amount)} / 300W) — [SYSTEM tab]`, done: isWatts300 || isAmp7 });
     if (isAmp7) {
-      subObjectives.push({ text: "Compile fragment key (run 'compile_fragment bootloader.key')", done: false });
+      subObjectives.push({ text: "Compile fragment key (run 'compile_fragment bootloader.key') — [TERMINAL console]", done: false });
     }
   } else if (phase === 'MAINFRAME') {
     const scraperCount = state.automationUnits.find(u => u.id === 'scraper')?.count || 0;
@@ -67,23 +67,48 @@ export const ObjectiveBanner: React.FC = () => {
       conditionMet = true;
     }
 
-    subObjectives.push({ text: `Unlock & Purchase Scraper.exe (Owned: ${scraperCount})`, done: hasScraper });
-    subObjectives.push({ text: `Unlock & Purchase Compiler.bat (Owned: ${compilerCount})`, done: hasCompiler });
-    subObjectives.push({ text: `Unlock & Purchase Daemon.sys (Owned: ${daemonCount})`, done: hasDaemon });
-    subObjectives.push({ text: `Unlock & Purchase Lattice.net (Owned: ${latticeCount})`, done: hasLattice });
-    subObjectives.push({ text: `Accumulate 100 Void Echoes (Current: ${Math.floor(voidEchoes)} / 100)`, done: hasEchoes });
+    subObjectives.push({ text: `Unlock & Purchase Scraper.exe (Owned: ${scraperCount}) — [MAINFRAME tab]`, done: hasScraper });
+    subObjectives.push({ text: `Unlock & Purchase Compiler.bat (Owned: ${compilerCount}) — [MAINFRAME tab]`, done: hasCompiler });
+    subObjectives.push({ text: `Unlock & Purchase Daemon.sys (Owned: ${daemonCount}) — [MAINFRAME tab]`, done: hasDaemon });
+    subObjectives.push({ text: `Unlock & Purchase Lattice.net (Owned: ${latticeCount}) — [MAINFRAME tab]`, done: hasLattice });
+    subObjectives.push({ text: `Accumulate 100 Void Echoes (Current: ${Math.floor(voidEchoes)} / 100) — [MAINFRAME tab]`, done: hasEchoes });
     if (hasEchoes) {
-      subObjectives.push({ text: "Establish handshake (run 'ping 10.0.0.7')", done: false });
+      subObjectives.push({ text: "Establish handshake (run 'ping 10.0.0.7') — [TERMINAL console]", done: false });
     }
   } else if (phase === 'GRID') {
     const currentDepth = state.currentMap?.depth || 1;
     const atDepth10 = currentDepth >= 10;
 
     mainObjective = 'Explore the Substratum Grid';
-    subHint = 'Navigate with WASD / Arrow keys, find exits, descend';
+    subHint = 'Support the probe as it maps out the grid floors';
 
-    subObjectives.push({ text: `Reach Grid Depth 10 (Current Depth: ${currentDepth})`, done: atDepth10 });
-    subObjectives.push({ text: 'Locate and defeat the Archivist Node Monitor (Depth 10)', done: false });
+    // Calculate exploration progress
+    let exploredCount = 0;
+    let floorSize = 0;
+    if (state.currentMap) {
+      for (const key in state.currentMap.cells) {
+        const cell = state.currentMap.cells[key];
+        if (cell.passable) {
+          floorSize++;
+          if (cell.explored) exploredCount++;
+        }
+      }
+    }
+    const explorePct = floorSize > 0 ? Math.floor((exploredCount / floorSize) * 100) : 0;
+
+    // Calculate active threat count
+    let activeEnemiesCount = 0;
+    if (state.enemyDatabase) {
+      for (const key in state.enemyDatabase) {
+        const e = state.enemyDatabase[key];
+        if (e && e.hp > 0) activeEnemiesCount++;
+      }
+    }
+
+    subObjectives.push({ text: `Reach Grid Depth 10 (Current Depth: ${currentDepth}) — [GRID tab]`, done: atDepth10 });
+    subObjectives.push({ text: `Floor ${currentDepth} Explored: ${exploredCount}/${floorSize} (${explorePct}%) — [GRID tab]`, done: explorePct >= 100 });
+    subObjectives.push({ text: `Threat Nodes Remaining: ${activeEnemiesCount} — [GRID tab]`, done: activeEnemiesCount === 0 });
+    subObjectives.push({ text: 'Locate and defeat the Archivist Node Monitor (Depth 10) — [GRID tab]', done: false });
   } else if (phase === 'PARADIGM') {
     const currentDepth = state.currentMap?.depth || 10;
     const atDepth20 = currentDepth >= 20;
@@ -93,11 +118,36 @@ export const ObjectiveBanner: React.FC = () => {
     mainObjective = 'Reshape the Substrate';
     subHint = 'Use the Paradigm Injection terminal to alter the simulation';
 
-    subObjectives.push({ text: `Activate at least 1 Meta Injection (Current Active: ${state.activeInjections.length})`, done: hasInjections });
-    subObjectives.push({ text: `Explore down to Grid Depth 20 (Current Depth: ${currentDepth})`, done: atDepth20 });
-    subObjectives.push({ text: 'Defeat Master Core Archivist to extract PURGE_KEY', done: hasPurgeKey });
+    // Calculate exploration progress
+    let exploredCount = 0;
+    let floorSize = 0;
+    if (state.currentMap) {
+      for (const key in state.currentMap.cells) {
+        const cell = state.currentMap.cells[key];
+        if (cell.passable) {
+          floorSize++;
+          if (cell.explored) exploredCount++;
+        }
+      }
+    }
+    const explorePct = floorSize > 0 ? Math.floor((exploredCount / floorSize) * 100) : 0;
+
+    // Calculate active threat count
+    let activeEnemiesCount = 0;
+    if (state.enemyDatabase) {
+      for (const key in state.enemyDatabase) {
+        const e = state.enemyDatabase[key];
+        if (e && e.hp > 0) activeEnemiesCount++;
+      }
+    }
+
+    subObjectives.push({ text: `Activate at least 1 Meta Injection (Current Active: ${state.activeInjections.length}) — [PARADIGM tab]`, done: hasInjections });
+    subObjectives.push({ text: `Explore down to Grid Depth 20 (Current Depth: ${currentDepth}) — [GRID tab]`, done: atDepth20 });
+    subObjectives.push({ text: `Floor ${currentDepth} Explored: ${exploredCount}/${floorSize} (${explorePct}%) — [GRID tab]`, done: explorePct >= 100 });
+    subObjectives.push({ text: `Threat Nodes Remaining: ${activeEnemiesCount} — [GRID tab]`, done: activeEnemiesCount === 0 });
+    subObjectives.push({ text: 'Defeat Master Core Archivist to extract PURGE_KEY — [GRID tab]', done: hasPurgeKey });
     if (hasPurgeKey) {
-      subObjectives.push({ text: "Execute full system purge (run 'execute purge --confirm --all')", done: false });
+      subObjectives.push({ text: "Execute full system purge (run 'execute purge --confirm --all') — [TERMINAL console]", done: false });
     }
   }
 

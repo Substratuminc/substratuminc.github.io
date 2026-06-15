@@ -23,7 +23,7 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
   // Signal Amplifier level (level >= 1)
   const ampLevel = getUpgradeLevel(state, 'SIGNAL_AMPLIFIER');
   if (ampLevel > 0) {
-    result.staticNoise.produced += ampLevel * 0.8;
+    result.staticNoise.produced += 0.8 * Math.pow(1.5, ampLevel - 1);
   }
 
   // Thermal Duct level (level >= 1) - auto-vents heat
@@ -34,7 +34,11 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
 
   // Power Conduit level - trickle power recovery
   const conduitLevel = getUpgradeLevel(state, 'POWER_CONDUIT');
-  result.gridWatts.produced += 0.40 + conduitLevel * 0.15;
+  if (conduitLevel > 0) {
+    result.gridWatts.produced += (3 + conduitLevel * (conduitLevel - 1) / 2) / 20;
+  } else {
+    result.gridWatts.produced = 0;
+  }
 
   // 2. META INJECTIONS
   // Check if STATIC_PRODUCTION_RATE is modified by injection
@@ -70,6 +74,9 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
     }
   }
 
+  const highestDepth = state.highestDepthReached ?? 1;
+  const depthSpeedMultiplier = highestDepth >= 3 ? 1.10 : 1.0;
+
   const t13Multiplier = phantomCount > 0 ? Math.pow(2, phantomCount) : 1.0;
   const globalMultiplier = sovereignCount > 0 ? Math.pow(1.5, sovereignCount) : 1.0;
 
@@ -87,7 +94,7 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
     }
 
     // Tier multipliers
-    let tierMultiplier = globalMultiplier;
+    let tierMultiplier = globalMultiplier * depthSpeedMultiplier;
     if (unit.tier <= 3) {
       tierMultiplier *= t13Multiplier;
     }
@@ -141,7 +148,7 @@ export function computeResourceProduction(state: GameState): Record<ResourceKey,
         result.structuredLogic.consumed += activeCount * 0.5 * tierMultiplier;
         result.quantumFoam.consumed += activeCount * 0.3 * tierMultiplier;
         result.structuredLogic.produced += activeCount * 1.2 * tierMultiplier;
-        result.corruptedData.produced += activeCount * 0.1 * tierMultiplier;
+        result.corruptedData.produced += activeCount * 0.01 * tierMultiplier;
       }
 
     } else if (unit.id === 'lattice') {

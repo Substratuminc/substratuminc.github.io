@@ -61,12 +61,12 @@ export const MainframeDashboard: React.FC = () => {
     <div 
       className="mainframe-dashboard" 
       style={{
-        border: '2px solid var(--terminal-green)',
-        background: 'var(--panel-bg)',
-        padding: '12px',
+        border: 'none',
+        background: 'transparent',
+        padding: '2px',
         display: 'flex',
         flexDirection: 'row',
-        height: '420px',
+        height: '100%',
         fontFamily: 'Share Tech Mono, monospace',
         color: 'var(--terminal-green)',
         boxSizing: 'border-box',
@@ -227,6 +227,51 @@ export const MainframeDashboard: React.FC = () => {
             >
               <strong>DIAGNOSTIC WARNING:</strong> Automation nodes trigger memory leaks, loops, or overflows when static noise concentrations or thermal loads spike. Halted nodes produce zero yields and continue to drain power/resources. Trigger a reboot to flush node caches and restore nominal operation.
             </div>
+            {resources.corruptedData.amount > 0 && (
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  border: '1px solid var(--amber-warning)', 
+                  padding: '8px', 
+                  marginBottom: '10px',
+                  background: 'rgba(30, 10, 0, 0.2)' 
+                }}
+              >
+                <div>
+                  <span style={{ fontWeight: 'bold', color: 'var(--amber-warning)' }}>DATABASE CORRUPTION LEVEL: {Math.floor(resources.corruptedData.amount)}/100</span>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>High corruption triggers Logic Loops and node Infections.</div>
+                </div>
+                <button
+                  onClick={() => {
+                    const results = parseCommand('data_scrub');
+                    useGameStore.setState(s => ({
+                      terminalHistory: [...s.terminalHistory, ...results].slice(-200)
+                    }));
+                    const txt = results[0];
+                    if (txt && !txt.includes('Error')) {
+                      eventBus.emit('notification', { message: txt.replace('>> ', ''), type: 'success' });
+                    } else if (txt) {
+                      eventBus.emit('notification', { message: txt.replace('>> ', ''), type: 'warn' });
+                    }
+                  }}
+                  disabled={resources.quantumFoam.amount < 30}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid ' + (resources.quantumFoam.amount >= 30 ? 'var(--amber-warning)' : '#553311'),
+                    color: resources.quantumFoam.amount >= 30 ? 'var(--amber-warning)' : '#553311',
+                    cursor: resources.quantumFoam.amount >= 30 ? 'pointer' : 'not-allowed',
+                    fontFamily: 'Share Tech Mono, monospace',
+                    fontSize: '0.85rem',
+                    padding: '4px 10px',
+                  }}
+                  title="Purge database corruption. Requires 30 Quantum Foam."
+                >
+                  [SCRUB CORRUPTION (30 Foam)]
+                </button>
+              </div>
+            )}
             {activeFailures.length === 0 ? (
               <div style={{ color: '#88cc88', opacity: 0.8 }}>All mainframe automation systems nominal. No errors queued.</div>
             ) : (

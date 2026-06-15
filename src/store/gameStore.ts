@@ -7,7 +7,7 @@ import { CURRENT_SAVE_VERSION } from './constants';
 const createDefaultResources = () => ({
   staticNoise: { amount: 0, capacity: 250, productionPerTick: 0, consumptionPerTick: 0 },
   thermalCycles: { amount: 0, capacity: 100, productionPerTick: 0, consumptionPerTick: 0 },
-  gridWatts: { amount: 100, capacity: 500, productionPerTick: 0, consumptionPerTick: 0 }, // start with 100W (20% of 500)
+  gridWatts: { amount: 30, capacity: 500, productionPerTick: 0, consumptionPerTick: 0 }, // start with 30W (6% of 500)
   quantumFoam: { amount: 0, capacity: 1000, productionPerTick: 0, consumptionPerTick: 0 },
   structuredLogic: { amount: 0, capacity: 2000, productionPerTick: 0, consumptionPerTick: 0 },
   corruptedData: { amount: 0, capacity: 100, productionPerTick: 0, consumptionPerTick: 0 },
@@ -86,7 +86,7 @@ const createDefaultAutomationUnits = (): AutomationUnit[] => {
       tier: 5,
       count: 0,
       isActive: false,
-      productionTable: { ...emptyRecord(), structuredLogic: 1.2, corruptedData: 0.1 },
+      productionTable: { ...emptyRecord(), structuredLogic: 1.2, corruptedData: 0.01 },
       consumptionTable: { ...emptyRecord(), structuredLogic: 0.5, quantumFoam: 0.3 },
       failureState: null,
       failureCooldownTicks: 0,
@@ -209,6 +209,11 @@ export const createDefaultGameState = (): GameState => ({
   activeFailures: [],
   currentMap: null,
   visitedMapSeeds: [],
+  enemyDatabase: {},
+  highestDepthReached: 1,
+  unlockedMilestones: [],
+  autoExploreActive: false,
+  standby: true,
   injectionTerminalUnlocked: false,
   activeInjections: [],
   paradigmShardPool: 0,

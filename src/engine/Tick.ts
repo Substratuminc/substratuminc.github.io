@@ -7,6 +7,7 @@ import type { ResourceKey, ActiveStatusEffect, AutomationFailureState, Automatio
 import { TICK_RATE_MS } from '../store/constants';
 import { checkAchievements } from './AchievementChecker';
 import { eventBus } from './EventBus';
+import { executeProbeAutoStep } from '../phases/phase3/ProbeAutopilot';
 
 let tickInitialized = false;
 
@@ -137,14 +138,14 @@ export function initializeTick(): void {
               terminalHistory.push('>> [ALERT] Compiler.bat thermal overload! Run vent_heat immediately.');
             }
           } else if (unit.id === 'daemon') {
-            // LOGIC_LOOP: 1.5% chance per tick when corruptedData > 0
-            if (nextResources.corruptedData.amount > 0 && Math.random() < 0.015) {
+            // LOGIC_LOOP: 0.02% chance per tick when corruptedData > 15
+            if (nextResources.corruptedData.amount > 15 && Math.random() < 0.0002) {
               failureState = {
                 type: 'LOGIC_LOOP',
-                description: 'DAEMON-SYS: LOGIC_LOOP. Processing cycle corrupted. Run purge_corruption.',
+                description: 'DAEMON-SYS: LOGIC_LOOP. Processing cycle corrupted. Run reboot_node daemon.',
                 effectOnProduction: 0,
-                recoveryAction: 'PURGE_LOOP',
-                recoveryThreshold: 15, // structuredLogic or quantumFoam
+                recoveryAction: 'REBOOT',
+                recoveryThreshold: 0,
               };
               terminalHistory.push('>> [ALERT] Daemon.sys stuck in infinite LOGIC_LOOP.');
             }
@@ -162,11 +163,11 @@ export function initializeTick(): void {
               terminalHistory.push('>> [ALERT] Buffer.dll power surge detected! Quantum Foam storage purged.');
             }
           } else if (unit.id === 'reaper') {
-            // CORRUPTION: if Corrupted Data > 25
-            if (nextResources.corruptedData.amount > 25) {
+            // CORRUPTION: 0.03% chance per tick when corruptedData > 50
+            if (nextResources.corruptedData.amount > 50 && Math.random() < 0.0003) {
               failureState = {
                 type: 'CORRUPTION',
-                description: 'REAPER-EXE: CORRUPTION. System files infected. Run data_scrub --unit=reaper.',
+                description: 'REAPER-EXE: CORRUPTION. System files infected. Run data_scrub.',
                 effectOnProduction: 0, // makes it produce +1 CD per tick (handled in selectors)
                 recoveryAction: 'DATA_SCRUB',
                 recoveryThreshold: 30, // QF cost
@@ -210,6 +211,50 @@ export function initializeTick(): void {
       // Increment playtime
       const nextSeconds = state.totalRealTimeSeconds + TICK_RATE_MS / 1000;
 
+      // Process auto-explore probe autopilot step (every 7 ticks ~ 350ms)
+      if (state.tickCount % 7 === 0 && (state.phase === 'GRID' || state.phase === 'PARADIGM') && state.autoExploreActive && !state.standby && nextHp > 0 && state.currentMap) {
+        const autoChanges = executeProbeAutoStep(state);
+        if (autoChanges) {
+          if (autoChanges.playerGrid) {
+            playerGrid.x = autoChanges.playerGrid.x;
+            playerGrid.y = autoChanges.playerGrid.y;
+          }
+          if (autoChanges.currentMap) {
+            state.currentMap = autoChanges.currentMap;
+          }
+          if (autoChanges.player) {
+            nextHp = autoChanges.player.hp !== undefined ? autoChanges.player.hp : nextHp;
+            if (autoChanges.player.inventory) {
+              playerInventory = autoChanges.player.inventory;
+            }
+          }
+          if (autoChanges.enemyDatabase) {
+            state.enemyDatabase = autoChanges.enemyDatabase;
+          }
+          if (autoChanges.terminalHistory) {
+            terminalHistory = autoChanges.terminalHistory;
+          }
+          if (autoChanges.unlockedMilestones) {
+            state.unlockedMilestones = autoChanges.unlockedMilestones;
+          }
+          if (autoChanges.highestDepthReached) {
+            state.highestDepthReached = autoChanges.highestDepthReached;
+          }
+          if (autoChanges.standby !== undefined) {
+            state.standby = autoChanges.standby;
+          }
+          if (autoChanges.autoExploreActive !== undefined) {
+            state.autoExploreActive = autoChanges.autoExploreActive;
+          }
+          if (autoChanges.phase !== undefined) {
+            state.phase = autoChanges.phase;
+          }
+          if (autoChanges.injectionTerminalUnlocked !== undefined) {
+            state.injectionTerminalUnlocked = autoChanges.injectionTerminalUnlocked;
+          }
+        }
+      }
+
       return {
         resources: nextResources,
         player: {
@@ -226,6 +271,14 @@ export function initializeTick(): void {
         totalRealTimeSeconds: nextSeconds,
         terminalHistory: terminalHistory.slice(-200), // keep logs clean
         secrets: { ...state.secrets, overheatTimer: nextOverheatTimer },
+        currentMap: state.currentMap,
+        enemyDatabase: state.enemyDatabase,
+        unlockedMilestones: state.unlockedMilestones,
+        highestDepthReached: state.highestDepthReached,
+        standby: state.standby,
+        autoExploreActive: state.autoExploreActive,
+        phase: state.phase,
+        injectionTerminalUnlocked: state.injectionTerminalUnlocked,
       };
     });
 
