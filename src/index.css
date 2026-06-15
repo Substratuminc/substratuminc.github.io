@@ -1,0 +1,160 @@
+/* src/index.css */
+
+:root {
+  --bg-color: #050505;
+  --panel-bg: #090909;
+  --terminal-green: #33ff66;
+  --amber-warning: #ff6b35;
+  --accent-blue: #00d2ff;
+  --text-color: #cccccc;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: 'Share Tech Mono', monospace;
+  overflow-x: hidden;
+}
+
+/* CRT Scanline overlay */
+body::after {
+  content: " ";
+  display: block;
+  position: fixed;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  z-index: 99999;
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+}
+
+/* CRT Screen flicker */
+@keyframes flicker {
+  0% { opacity: 0.985; }
+  50% { opacity: 0.995; }
+  100% { opacity: 0.985; }
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  animation: flicker 0.15s infinite;
+  box-sizing: border-box;
+  padding: 20px;
+}
+
+/* Scrollbars custom styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.3);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--terminal-green);
+  border-radius: 3px;
+}
+
+/* Animations */
+@keyframes thermal-pulse {
+  from { text-shadow: 0 0 4px var(--amber-warning); color: var(--amber-warning); }
+  to { text-shadow: 0 0 12px #ff0000; color: #ff0000; }
+}
+
+.thermal-pulse {
+  animation: thermal-pulse 0.80s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-amber {
+  from { color: var(--amber-warning); }
+  to { color: #ff3333; }
+}
+
+.pulse-amber {
+  animation: pulse-amber 1s ease-in-out infinite alternate;
+}
+
+@keyframes flash-urgent {
+  0% { color: #ff3333; }
+  50% { color: var(--amber-warning); }
+  100% { color: #ff3333; }
+}
+
+.flash-urgent {
+  animation: flash-urgent 0.8s ease-in-out infinite;
+}
+
+/* Panel Layout grid */
+.panels-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+@media (min-width: 900px) {
+  .panels-grid {
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  }
+}
+
+/* Utility buttons */
+button:focus {
+  outline: none;
+}
+input:focus {
+  outline: none;
+}
+textarea:focus {
+  outline: none;
+}
+
+::placeholder {
+  color: var(--terminal-green);
+  opacity: 0.35;
+}
+
+/* Operation buttons styling */
+.op-button {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  background: rgba(51, 255, 102, 0.05);
+  border: 1px solid var(--terminal-green);
+  color: var(--terminal-green);
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(51, 255, 102, 0.15);
+  transition: all 0.2s ease-in-out;
+}
+.op-button:hover:not(:disabled) {
+  background: rgba(51, 255, 102, 0.25);
+  box-shadow: 0 0 12px rgba(51, 255, 102, 0.5);
+  text-shadow: 0 0 5px var(--terminal-green);
+}
+.op-button:disabled {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: #222222;
+  color: #444444;
+  cursor: not-allowed;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.op-button.warn {
+  background: rgba(255, 107, 53, 0.05);
+  border-color: var(--amber-warning);
+  color: var(--amber-warning);
+  box-shadow: 0 0 4px rgba(255, 107, 53, 0.15);
+}
+.op-button.warn:hover:not(:disabled) {
+  background: rgba(255, 107, 53, 0.25);
+  box-shadow: 0 0 12px rgba(255, 107, 53, 0.5);
+  text-shadow: 0 0 5px var(--amber-warning);
+}
+
