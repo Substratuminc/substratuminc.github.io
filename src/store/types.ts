@@ -39,6 +39,7 @@ export interface InventoryItem {
   maxDurability?: number;
   stats?: ItemStats;
   flags: ItemFlag[];
+  set?: 'MAINFRAME' | 'GLITCH' | 'QUANTUM';
 }
 
 export interface ItemStats {
@@ -241,6 +242,12 @@ export interface GameState {
   unlockedMilestones: string[];
   autoExploreActive: boolean;
   standby: boolean;
+
+  // Auto-Battler states
+  combatDefeatCount: number;
+  activeCombatEnemy: any;
+  combatHistory: string[];
+  playerAttackCooldowns: Record<string, number>;
 
   // Meta / Phase 4
   injectionTerminalUnlocked: boolean;

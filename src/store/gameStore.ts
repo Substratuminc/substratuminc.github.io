@@ -214,6 +214,13 @@ export const createDefaultGameState = (): GameState => ({
   unlockedMilestones: [],
   autoExploreActive: false,
   standby: true,
+
+  // Auto-Battler initial states
+  combatDefeatCount: 0,
+  activeCombatEnemy: null,
+  combatHistory: [],
+  playerAttackCooldowns: {},
+
   injectionTerminalUnlocked: false,
   activeInjections: [],
   paradigmShardPool: 0,

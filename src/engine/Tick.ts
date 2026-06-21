@@ -3,11 +3,12 @@
 import { gameLoop } from './GameLoop';
 import { useGameStore } from '../store/gameStore';
 import { computeResourceProduction } from '../store/selectors';
-import type { ResourceKey, ActiveStatusEffect, AutomationFailureState, AutomationUnit } from '../store/types';
+import type { ResourceKey, ActiveStatusEffect, AutomationFailureState, AutomationUnit, InventoryItem } from '../store/types';
 import { TICK_RATE_MS } from '../store/constants';
 import { checkAchievements } from './AchievementChecker';
 import { eventBus } from './EventBus';
-import { executeProbeAutoStep } from '../phases/phase3/ProbeAutopilot';
+import { createEnemy } from '../phases/phase3/enemies/EnemyFactory';
+import { playerAttackEnemy, enemyAttackPlayer } from '../phases/phase3/CombatEngine';
 
 let tickInitialized = false;
 
@@ -211,46 +212,173 @@ export function initializeTick(): void {
       // Increment playtime
       const nextSeconds = state.totalRealTimeSeconds + TICK_RATE_MS / 1000;
 
-      // Process auto-explore probe autopilot step (every 7 ticks ~ 350ms)
-      if (state.tickCount % 7 === 0 && (state.phase === 'GRID' || state.phase === 'PARADIGM') && state.autoExploreActive && !state.standby && nextHp > 0 && state.currentMap) {
-        const autoChanges = executeProbeAutoStep(state);
-        if (autoChanges) {
-          if (autoChanges.playerGrid) {
-            playerGrid.x = autoChanges.playerGrid.x;
-            playerGrid.y = autoChanges.playerGrid.y;
+      // 5. Update player special attack cooldowns (every tick)
+      const nextCooldowns = { ...state.playerAttackCooldowns };
+      for (const key in nextCooldowns) {
+        if (nextCooldowns[key] > 0) {
+          nextCooldowns[key]--;
+        }
+      }
+
+      // 6. Process auto-battler combat step (every 30 ticks ~ 1.5 seconds)
+      let activeEnemy = state.activeCombatEnemy ? { ...state.activeCombatEnemy } : null;
+      let defeatCount = state.combatDefeatCount;
+      let depth = state.highestDepthReached || 1;
+      let standbyMode = state.standby;
+      let autoActive = state.autoExploreActive;
+      let currentPhase = state.phase;
+      let injectionUnlocked = state.injectionTerminalUnlocked;
+      const combatHistory = [...state.combatHistory];
+
+      if (state.tickCount % 30 === 0 && (currentPhase === 'GRID' || currentPhase === 'PARADIGM') && autoActive && !standbyMode && nextHp > 0) {
+        if (!activeEnemy) {
+          // Spawn a new enemy!
+          const isBossFight = (defeatCount === 2);
+          const normalTypes = ['drone', 'apparition', 'hydra', 'ghost'];
+          const randomType = normalTypes[Math.floor(Math.random() * normalTypes.length)];
+          const enemyId = isBossFight 
+            ? `boss_${depth}` 
+            : `enemy_${depth}_${defeatCount}_${Math.floor(Math.random() * 1000)}_${randomType}`;
+          
+          activeEnemy = createEnemy(enemyId, depth);
+          terminalHistory.push(`>> [ALARM] Hostile signature detected: ${activeEnemy.name}`);
+          combatHistory.push(`>> Hostile signature detected: ${activeEnemy.name}`);
+        } else {
+          // Combat round!
+          // Player attacks enemy
+          const playerRes = playerAttackEnemy(state.player, activeEnemy, state);
+          combatHistory.push(playerRes.combatLog);
+          terminalHistory.push(`>> ${playerRes.combatLog}`);
+
+          if (playerRes.statusApplied) {
+            activeEnemy.activeStatusEffects = activeEnemy.activeStatusEffects || [];
+            activeEnemy.activeStatusEffects.push({ effect: playerRes.statusApplied, remainingTicks: 6, magnitude: 1 });
+            combatHistory.push(`>> Applied ${playerRes.statusApplied} status to ${activeEnemy.name}.`);
           }
-          if (autoChanges.currentMap) {
-            state.currentMap = autoChanges.currentMap;
-          }
-          if (autoChanges.player) {
-            nextHp = autoChanges.player.hp !== undefined ? autoChanges.player.hp : nextHp;
-            if (autoChanges.player.inventory) {
-              playerInventory = autoChanges.player.inventory;
+
+          // Apply damage to enemy
+          activeEnemy.hp = Math.max(0, activeEnemy.hp - playerRes.damage);
+
+          if (activeEnemy.hp <= 0) {
+            // Enemy defeated!
+            terminalHistory.push(`>> Defeated ${activeEnemy.name}! Gain ${activeEnemy.xpValue} XP.`);
+            combatHistory.push(`>> Defeated ${activeEnemy.name}! Gain ${activeEnemy.xpValue} XP.`);
+
+            // Give XP & Level Up
+            let nextExp = state.player.experience + activeEnemy.xpValue;
+            let nextLvl = state.player.level;
+            let nextMaxXp = state.player.experienceToNextLevel;
+            let nextBaseAtk = state.player.baseAttack;
+            let nextBaseDef = state.player.baseDefense;
+            let nextMaxHp = state.player.maxHp;
+            
+            if (nextExp >= nextMaxXp) {
+              nextLvl += 1;
+              nextExp -= nextMaxXp;
+              nextMaxXp = Math.floor(50 * Math.pow(nextLvl, 1.6));
+              nextMaxHp += 5 + Math.floor(nextLvl / 2);
+              nextBaseAtk += 1;
+              if (nextLvl % 2 === 0) nextBaseDef += 1;
+              nextHp = Math.min(nextMaxHp, nextHp + 5); // heal 5 on lvl up
+              
+              eventBus.emit('notification', { message: `LEVEL UP! Reached Level ${nextLvl}!`, type: 'success' });
             }
-          }
-          if (autoChanges.enemyDatabase) {
-            state.enemyDatabase = autoChanges.enemyDatabase;
-          }
-          if (autoChanges.terminalHistory) {
-            terminalHistory = autoChanges.terminalHistory;
-          }
-          if (autoChanges.unlockedMilestones) {
-            state.unlockedMilestones = autoChanges.unlockedMilestones;
-          }
-          if (autoChanges.highestDepthReached) {
-            state.highestDepthReached = autoChanges.highestDepthReached;
-          }
-          if (autoChanges.standby !== undefined) {
-            state.standby = autoChanges.standby;
-          }
-          if (autoChanges.autoExploreActive !== undefined) {
-            state.autoExploreActive = autoChanges.autoExploreActive;
-          }
-          if (autoChanges.phase !== undefined) {
-            state.phase = autoChanges.phase;
-          }
-          if (autoChanges.injectionTerminalUnlocked !== undefined) {
-            state.injectionTerminalUnlocked = autoChanges.injectionTerminalUnlocked;
+
+            // Process drops
+            activeEnemy.drops.forEach((drop: any) => {
+              if (Math.random() < drop.chance && drop.item) {
+                const newItem = {
+                  ...drop.item,
+                  quantity: 1,
+                } as InventoryItem;
+                if (playerInventory.length < state.player.maxInventorySlots) {
+                  playerInventory.push(newItem);
+                  combatHistory.push(`>> Acquired item: ${newItem.name}`);
+                  terminalHistory.push(`>> Acquired item: ${newItem.name}`);
+                }
+              }
+            });
+
+            // If Boss is defeated, descend floor
+            if (activeEnemy.enemyType === 'boss') {
+              depth += 1;
+              defeatCount = 0;
+              standbyMode = true;
+              autoActive = false;
+              terminalHistory.push(`>> [SUCCESS] Descended to Depth ${depth}.`);
+              combatHistory.push(`>> [SUCCESS] Descended to Depth ${depth}.`);
+
+              if (depth === 11 && currentPhase === 'GRID') {
+                currentPhase = 'PARADIGM';
+                injectionUnlocked = true;
+                terminalHistory.push(
+                  '>> [SYSTEM ALERT] NODE MONITOR ARCHIVIST OFFLINE.',
+                  '>> RECOVERED ARCHIVIST KEY FILE.',
+                  '>> PARADIGM COMPILATION PORT ACTIVE.'
+                );
+                eventBus.emit('notification', { message: 'Paradigm Shift Unlocked! Hacking interface open.', type: 'success' });
+              }
+            } else {
+              defeatCount += 1;
+            }
+
+            activeEnemy = null;
+          } else {
+            // Enemy attacks back!
+            let isLooped = false;
+            if (activeEnemy.activeStatusEffects) {
+              const loopIdx = activeEnemy.activeStatusEffects.findIndex((e: any) => e.effect === 'glitchLooped');
+              if (loopIdx >= 0) {
+                isLooped = true;
+                activeEnemy.activeStatusEffects[loopIdx].remainingTicks--;
+                if (activeEnemy.activeStatusEffects[loopIdx].remainingTicks <= 0) {
+                  activeEnemy.activeStatusEffects.splice(loopIdx, 1);
+                }
+              }
+            }
+
+            if (isLooped) {
+              combatHistory.push(`>> ${activeEnemy.name} is glitch-looped and skips its turn!`);
+              terminalHistory.push(`>> ${activeEnemy.name} is glitch-looped and skips its turn!`);
+            } else {
+              const enemyRes = enemyAttackPlayer(activeEnemy, state.player);
+              combatHistory.push(enemyRes.combatLog);
+              terminalHistory.push(`>> ${enemyRes.combatLog}`);
+
+              if (enemyRes.hit) {
+                nextHp = Math.max(0, nextHp - enemyRes.damage);
+
+                // Reduce durability of equipped armor
+                const slots = ['head', 'torso', 'hands', 'feet'] as const;
+                slots.forEach(slot => {
+                  const item = playerEquipment[slot];
+                  if (item && item.durability !== undefined) {
+                    item.durability = Math.max(0, item.durability - 1);
+                  }
+                });
+              }
+
+              if (nextHp <= 0) {
+                // Player defeated!
+                nextHp = 1;
+                nextEffects.length = 0; // Clear status effects
+                standbyMode = true;
+                autoActive = false;
+                activeEnemy = null;
+
+                // Reduce durability of all gear by 50%
+                const eqSlots: (keyof typeof playerEquipment)[] = ['head', 'torso', 'hands', 'feet', 'mainHand', 'offHand', 'relic1', 'relic2'];
+                for (const slot of eqSlots) {
+                  const item = playerEquipment[slot];
+                  if (item && item.durability !== undefined && item.maxDurability !== undefined) {
+                    item.durability = Math.max(0, Math.round(item.durability * 0.5));
+                  }
+                }
+
+                terminalHistory.push('>> [SYSTEM ALERT] OPERATOR INTEGRITY COMPROMISED. RE-MATERIALIZING AT NODE ENTRANCE...');
+                combatHistory.push('>> [ALERT] Operator integrity compromised! Rematerializing...');
+              }
+            }
           }
         }
       }
@@ -274,11 +402,15 @@ export function initializeTick(): void {
         currentMap: state.currentMap,
         enemyDatabase: state.enemyDatabase,
         unlockedMilestones: state.unlockedMilestones,
-        highestDepthReached: state.highestDepthReached,
-        standby: state.standby,
-        autoExploreActive: state.autoExploreActive,
-        phase: state.phase,
-        injectionTerminalUnlocked: state.injectionTerminalUnlocked,
+        highestDepthReached: depth,
+        standby: standbyMode,
+        autoExploreActive: autoActive,
+        phase: currentPhase,
+        injectionTerminalUnlocked: injectionUnlocked,
+        combatDefeatCount: defeatCount,
+        activeCombatEnemy: activeEnemy,
+        combatHistory: combatHistory.slice(-100),
+        playerAttackCooldowns: nextCooldowns,
       };
     });
 

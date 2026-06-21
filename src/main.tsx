@@ -10,22 +10,36 @@ import { asciiAnimator } from './engine/AsciiAnimator';
 import { saveManager } from './persistence/SaveManager';
 import { useGameStore } from './store/gameStore';
 
-// Initialize the 20Hz Tick loop
-initializeTick();
+async function initGame() {
+  try {
+    const savedState = await saveManager.load('auto');
+    if (savedState) {
+      useGameStore.setState(savedState);
+      console.log('[SYSTEM] Auto-save state restored successfully.');
+    }
+  } catch (e) {
+    console.error('[SYSTEM ALERT] Failed to load auto-save:', e);
+  }
 
-// Bind ASCII animator tick to the render callback (60fps animation)
-gameLoop.onRender((_delta) => {
-  asciiAnimator.tick(performance.now());
-});
+  // Initialize the 20Hz Tick loop
+  initializeTick();
 
-// Start the game loop
-gameLoop.start();
+  // Bind ASCII animator tick to the render callback (60fps animation)
+  gameLoop.onRender((_delta) => {
+    asciiAnimator.tick(performance.now());
+  });
 
-// Start the triple-layer auto save (every 30 seconds)
-saveManager.startAutoSave(() => useGameStore.getState());
+  // Start the game loop
+  gameLoop.start();
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+  // Start the triple-layer auto save (every 30 seconds)
+  saveManager.startAutoSave(() => useGameStore.getState());
+
+  createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+}
+
+initGame();

@@ -1,16 +1,52 @@
 // src/phases/phase3/GridViewport.tsx
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { getEquipmentStats } from './CombatEngine';
+import { 
+  getEquipmentStats, 
+  getEffectiveMaxHp, 
+  SPECIAL_ATTACKS, 
+  executeSpecialAttack 
+} from './CombatEngine';
 import type { InventoryItem } from '../../store/types';
+import { eventBus } from '../../engine/EventBus';
+
+const PLAYER_ASCII = `      .---.
+     /     \\
+    \\\\  ^  //
+     \\\\___//
+    /       \\
+   /|   |   |\\
+  / |   |   | \\
+ |  |   |   |  |
+ |  |___|___|  |
+ |  (   |   )  |
+  \\  \\  |  /  /
+   '--'-'-'--'`;
 
 export const GridViewport: React.FC = () => {
   const state = useGameStore();
-  const { currentMap, playerGrid, player, enemyDatabase, standby, resources } = state;
+  const { 
+    player, 
+    activeCombatEnemy, 
+    combatHistory, 
+    playerAttackCooldowns, 
+    standby, 
+    resources, 
+    automationUnits, 
+    highestDepthReached 
+  } = state;
 
   const [activeTab, setActiveTab] = useState<'STATS' | 'INVENTORY' | 'GOALS'>('STATS');
   const containerRef = useRef<HTMLDivElement>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Scroll combat log to bottom on updates
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [combatHistory]);
 
   const addLog = (log: string) => {
     useGameStore.setState(s => ({
@@ -27,7 +63,134 @@ export const GridViewport: React.FC = () => {
     addLog('>> [OPERATOR] Deployment lever pulled. Auto-exploration subroutines engaged.');
   };
 
-  // Interactive Support Operations
+  // Clickable player special attacks
+  const handleSpecialAttack = (attackId: string) => {
+    if (!activeCombatEnemy) return;
+    const res = executeSpecialAttack(attackId, player, activeCombatEnemy, state);
+    if (!res.success) {
+      eventBus.emit('notification', { message: res.error || 'Cannot use ability', type: 'warn' });
+      return;
+    }
+
+    const combatResult = res.result!;
+    const nextEnemyHp = Math.max(0, activeCombatEnemy.hp - combatResult.damage);
+    const updatedEnemy = { ...activeCombatEnemy, hp: nextEnemyHp };
+    
+    if (combatResult.statusApplied) {
+      updatedEnemy.activeStatusEffects = updatedEnemy.activeStatusEffects || [];
+      updatedEnemy.activeStatusEffects.push({ effect: combatResult.statusApplied, remainingTicks: 6, magnitude: 1 });
+    }
+
+    const nextHistory = [...state.combatHistory, combatResult.combatLog];
+    const terminalHistory = [...state.terminalHistory, combatResult.combatLog];
+
+    // Set cooldown in ticks (cooldown seconds * 20 ticks/sec)
+    const attack = SPECIAL_ATTACKS.find(a => a.id === attackId);
+    const cooldownTicks = attack ? attack.cooldownSec * 20 : 80;
+    const nextCooldowns = {
+      ...state.playerAttackCooldowns,
+      [attackId]: cooldownTicks
+    };
+
+    useGameStore.setState(s => {
+      let nextHp = s.player.hp;
+      let nextExp = s.player.experience;
+      let nextLvl = s.player.level;
+      let nextMaxXp = s.player.experienceToNextLevel;
+      let nextMaxHp = s.player.maxHp;
+      let nextBaseAtk = s.player.baseAttack;
+      let nextBaseDef = s.player.baseDefense;
+      let nextDepth = s.highestDepthReached || 1;
+      let standbyMode = s.standby;
+      let autoActive = s.autoExploreActive;
+      let currentPhase = s.phase;
+      let injectionUnlocked = s.injectionTerminalUnlocked;
+      const playerInventory = [...s.player.inventory];
+      let activeEnemy: any = updatedEnemy;
+      let defeatCount = s.combatDefeatCount;
+
+      if (nextEnemyHp <= 0) {
+        // Enemy defeated!
+        terminalHistory.push(`>> Defeated ${activeEnemy.name}! Gain ${activeEnemy.xpValue} XP.`);
+        nextHistory.push(`>> Defeated ${activeEnemy.name}! Gain ${activeEnemy.xpValue} XP.`);
+
+        nextExp += activeEnemy.xpValue;
+        if (nextExp >= nextMaxXp) {
+          nextLvl += 1;
+          nextExp -= nextMaxXp;
+          nextMaxXp = Math.floor(50 * Math.pow(nextLvl, 1.6));
+          nextMaxHp += 5 + Math.floor(nextLvl / 2);
+          nextBaseAtk += 1;
+          if (nextLvl % 2 === 0) nextBaseDef += 1;
+          nextHp = Math.min(nextMaxHp, nextHp + 5);
+          eventBus.emit('notification', { message: `LEVEL UP! Reached Level ${nextLvl}!`, type: 'success' });
+        }
+
+        // Drops
+        activeEnemy.drops.forEach((drop: any) => {
+          if (Math.random() < drop.chance && drop.item) {
+            const newItem = { ...drop.item, quantity: 1 } as InventoryItem;
+            if (playerInventory.length < s.player.maxInventorySlots) {
+              playerInventory.push(newItem);
+              nextHistory.push(`>> Acquired item: ${newItem.name}`);
+              terminalHistory.push(`>> Acquired item: ${newItem.name}`);
+            }
+          }
+        });
+
+        // Boss checks
+        if (activeEnemy.enemyType === 'boss') {
+          nextDepth += 1;
+          defeatCount = 0;
+          standbyMode = true;
+          autoActive = false;
+          terminalHistory.push(`>> [SUCCESS] Descended to Depth ${nextDepth}.`);
+          nextHistory.push(`>> [SUCCESS] Descended to Depth ${nextDepth}.`);
+
+          if (nextDepth === 11 && currentPhase === 'GRID') {
+            currentPhase = 'PARADIGM';
+            injectionUnlocked = true;
+            terminalHistory.push(
+              '>> [SYSTEM ALERT] NODE MONITOR ARCHIVIST OFFLINE.',
+              '>> RECOVERED ARCHIVIST KEY FILE.',
+              '>> PARADIGM COMPILATION PORT ACTIVE.'
+            );
+            eventBus.emit('notification', { message: 'Paradigm Shift Unlocked! Hacking interface open.', type: 'success' });
+          }
+        } else {
+          defeatCount += 1;
+        }
+
+        activeEnemy = null;
+      }
+
+      return {
+        player: {
+          ...s.player,
+          hp: nextHp,
+          maxHp: nextMaxHp,
+          experience: nextExp,
+          level: nextLvl,
+          experienceToNextLevel: nextMaxXp,
+          baseAttack: nextBaseAtk,
+          baseDefense: nextBaseDef,
+          inventory: playerInventory,
+        },
+        activeCombatEnemy: activeEnemy,
+        combatDefeatCount: defeatCount,
+        highestDepthReached: nextDepth,
+        standby: standbyMode,
+        autoExploreActive: autoActive,
+        phase: currentPhase,
+        injectionTerminalUnlocked: injectionUnlocked,
+        combatHistory: nextHistory.slice(-100),
+        terminalHistory: terminalHistory.slice(-200),
+        playerAttackCooldowns: nextCooldowns,
+      };
+    });
+  };
+
+  // Support Actions (Synergized with getEffectiveMaxHp)
   const triggerOvercharge = () => {
     if (resources.gridWatts.amount < 10) return;
     useGameStore.setState(s => {
@@ -35,7 +198,7 @@ export const GridViewport: React.FC = () => {
       const nextEffects = [...s.player.activeStatusEffects];
       const idx = nextEffects.findIndex(e => e.effect === 'overclockedI');
       if (idx >= 0) {
-        nextEffects[idx].remainingTicks = 400; // refresh
+        nextEffects[idx].remainingTicks = 400;
       } else {
         nextEffects.push({ effect: 'overclockedI', remainingTicks: 400, magnitude: 1 });
       }
@@ -51,7 +214,8 @@ export const GridViewport: React.FC = () => {
     if (resources.gridWatts.amount < 15) return;
     useGameStore.setState(s => {
       const nextWatts = Math.max(0, s.resources.gridWatts.amount - 15);
-      const nextHp = Math.min(s.player.maxHp, s.player.hp + 15);
+      const effectiveMaxHp = getEffectiveMaxHp(s.player, s);
+      const nextHp = Math.min(effectiveMaxHp, s.player.hp + 15);
       return {
         resources: { ...s.resources, gridWatts: { ...s.resources.gridWatts, amount: nextWatts } },
         player: { ...s.player, hp: nextHp }
@@ -61,20 +225,15 @@ export const GridViewport: React.FC = () => {
   };
 
   const triggerRadarScan = () => {
-    if (resources.staticNoise.amount < 50 || !currentMap) return;
+    if (resources.staticNoise.amount < 50) return;
     useGameStore.setState(s => {
-      if (!s.currentMap) return {};
       const nextStatic = Math.max(0, s.resources.staticNoise.amount - 50);
-      const updatedCells = { ...s.currentMap.cells };
-      for (const key in updatedCells) {
-        updatedCells[key] = { ...updatedCells[key], explored: true };
-      }
+      // Radar scans are lore-integrated in auto-battler: exposes enemy layout details
       return {
-        resources: { ...s.resources, staticNoise: { ...s.resources.staticNoise, amount: nextStatic } },
-        currentMap: { ...s.currentMap, cells: updatedCells }
+        resources: { ...s.resources, staticNoise: { ...s.resources.staticNoise, amount: nextStatic } }
       };
     });
-    addLog('>> [SUPPORT] Radar scan active. Map layout fully decoded.');
+    addLog('>> [SUPPORT] Radar scan active. Area electromagnetic echo decoded.');
   };
 
   const triggerRepairNanites = () => {
@@ -101,13 +260,18 @@ export const GridViewport: React.FC = () => {
   const handleUseItem = (item: InventoryItem, idx: number) => {
     if (item.category === 'consumable') {
       useGameStore.setState(s => {
+        const effectiveMaxHp = getEffectiveMaxHp(s.player, s);
         let hp = s.player.hp;
         let effects = [...s.player.activeStatusEffects];
 
-        if (item.id === 'hypothesis_cactus') {
-          hp = s.player.maxHp;
+        if (item.id === 'hypothesis_cactus' || item.id === 'cactus_hypothesis') {
+          hp = effectiveMaxHp;
           effects = []; // clear debuffs
           addLog('>> Consumed Hypothesis cactus. HP fully restored, debuffs cleared.');
+        } else if (item.id === 'null_syringe') {
+          hp = Math.min(effectiveMaxHp, hp + 30);
+          effects.push({ effect: 'nullPoison', remainingTicks: 60, magnitude: 1 });
+          addLog('>> Consumed Null-Syringe. HP +30. Injected Null Poison.');
         }
 
         const nextInv = s.player.inventory.filter((_, i) => i !== idx);
@@ -129,9 +293,10 @@ export const GridViewport: React.FC = () => {
         let targetSlot: keyof typeof s.player.equipment = 'mainHand';
         if (item.category === 'weapon') targetSlot = 'mainHand';
         else if (item.category === 'armor') {
-          if (item.id.includes('helm')) targetSlot = 'head';
+          if (item.id.includes('visor') || item.id.includes('mask') || item.id.includes('helm')) targetSlot = 'head';
           else if (item.id.includes('shield')) targetSlot = 'offHand';
-          else if (item.id.includes('boots')) targetSlot = 'feet';
+          else if (item.id.includes('boots') || item.id.includes('greaves') || item.id.includes('thrusters')) targetSlot = 'feet';
+          else if (item.id.includes('gloves') || item.id.includes('gauntlets') || item.id.includes('claws')) targetSlot = 'hands';
           else targetSlot = 'torso';
         } else if (item.category === 'relic') {
           targetSlot = nextEquip.relic1 === null ? 'relic1' : 'relic2';
@@ -181,72 +346,23 @@ export const GridViewport: React.FC = () => {
     addLog(`>> Unequipped ${item.name}.`);
   };
 
-  // Render the ASCII Grid Map character matrix
-  const renderMapGrid = () => {
-    if (!currentMap) return null;
-
-    const rows: React.ReactNode[] = [];
-    for (let y = 0; y < currentMap.height; y++) {
-      const cols: React.ReactNode[] = [];
-      for (let x = 0; x < currentMap.width; x++) {
-        const key = `${x},${y}`;
-        const cell = currentMap.cells[key];
-        const isPlayer = playerGrid.x === x && playerGrid.y === y;
-
-        if (isPlayer) {
-          cols.push(
-            <span key={key} style={{ color: '#00ff88', fontWeight: 'bold', background: '#222200' }}>
-              @
-            </span>
-          );
-          continue;
-        }
-
-        if (!cell || !cell.explored) {
-          cols.push(<span key={key} style={{ color: '#1a1a1a' }}>░</span>);
-          continue;
-        }
-
-        let fg = cell.fg;
-        let bg = cell.bg;
-        let glyph = cell.glyph;
-
-        if (!cell.visible) {
-          fg = '#3a3a3a'; // Explored but out of FOV
-        }
-
-        if (cell.isGlitchTile && cell.visible) {
-          const pool = '!@#$%^&*()_+-=[]{}';
-          const randIdx = Math.floor(Math.random() * pool.length);
-          glyph = pool[randIdx];
-        }
-
-        cols.push(
-          <span 
-            key={key} 
-            style={{ color: fg, background: bg, transition: 'color 0.15s ease' }}
-            title={cell.entityId ? enemyDatabase[cell.entityId]?.name : undefined}
-          >
-            {glyph}
-          </span>
-        );
-      }
-      rows.push(<div key={y} style={{ lineHeight: '1', height: '1rem' }}>{cols}</div>);
-    }
-
-    return rows;
+  const drawBar = (current: number, max: number, chars = 20) => {
+    const filled = Math.min(chars, Math.max(0, Math.round((current / max) * chars)));
+    const empty = chars - filled;
+    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;
   };
 
   const eqStats = getEquipmentStats(player);
+  const effectiveMaxHp = getEffectiveMaxHp(player, state);
 
-  const scraperCount = state.automationUnits.find(u => u.id === 'scraper')?.count || 0;
-  const compilerCount = state.automationUnits.find(u => u.id === 'compiler')?.count || 0;
-  const daemonCount = state.automationUnits.find(u => u.id === 'daemon')?.count || 0;
-  const bufferCount = state.automationUnits.find(u => u.id === 'buffer')?.count || 0;
-  const reaperCount = state.automationUnits.find(u => u.id === 'reaper')?.count || 0;
-  const latticeCount = state.automationUnits.find(u => u.id === 'lattice')?.count || 0;
+  const scraperCount = automationUnits.find(u => u.id === 'scraper')?.count || 0;
+  const compilerCount = automationUnits.find(u => u.id === 'compiler')?.count || 0;
+  const daemonCount = automationUnits.find(u => u.id === 'daemon')?.count || 0;
+  const bufferCount = automationUnits.find(u => u.id === 'buffer')?.count || 0;
+  const reaperCount = automationUnits.find(u => u.id === 'reaper')?.count || 0;
+  const latticeCount = automationUnits.find(u => u.id === 'lattice')?.count || 0;
 
-  const isLowHp = player.hp < player.maxHp * 0.25;
+  const isLowHp = player.hp < effectiveMaxHp * 0.25;
 
   return (
     <div 
@@ -264,31 +380,29 @@ export const GridViewport: React.FC = () => {
         position: 'relative'
       }}
     >
-      {/* Grid Canvas View */}
+      {/* Auto-Battler Arena View */}
       <div 
         ref={containerRef}
         style={{
           flex: 1,
           border: '1px solid var(--terminal-green)',
-          background: '#0a0a0a',
-          padding: '8px',
-          overflow: 'auto',
-          fontSize: '0.85rem',
-          whiteSpace: 'pre',
-          lineHeight: '1',
+          background: '#050505',
+          padding: '12px',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
           userSelect: 'none',
           position: 'relative'
         }}
       >
-        {renderMapGrid()}
-
         {/* Standby Deployment Overlay Lever */}
         {standby && (
           <div 
             style={{
               position: 'absolute',
               top: 0, left: 0, right: 0, bottom: 0,
-              background: 'rgba(5, 5, 5, 0.85)',
+              background: 'rgba(5, 5, 5, 0.92)',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'center',
@@ -301,7 +415,7 @@ export const GridViewport: React.FC = () => {
               [!] PROBE IN STANDBY DETECTED [!]
             </div>
             <div style={{ color: '#aaa', fontSize: '0.9rem', marginBottom: '25px', textAlign: 'center' }}>
-              DEPLOYMENT PATH SECURED. CLICK LEVER TO CLEAR FOR LAUNCH.
+              DEPTH {highestDepthReached} SECURED. CLICK LEVER TO DEPLOY COMBAT PROBE.
             </div>
             <button
               onClick={pullLever}
@@ -311,7 +425,10 @@ export const GridViewport: React.FC = () => {
                 padding: '12px 24px',
                 border: '2px solid var(--terminal-green)',
                 background: 'rgba(51, 255, 102, 0.15)',
-                boxShadow: '0 0 15px rgba(51, 255, 102, 0.4)'
+                boxShadow: '0 0 15px rgba(51, 255, 102, 0.4)',
+                cursor: 'pointer',
+                color: 'var(--terminal-green)',
+                fontFamily: 'Share Tech Mono, monospace'
               }}
             >
               [ PULL LEVER TO DEPLOY PROBE ]
@@ -319,12 +436,121 @@ export const GridViewport: React.FC = () => {
           </div>
         )}
 
+        {/* Combat Screen (if not standby) */}
+        {!standby && (
+          <>
+            {/* Top row: HP bars */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', borderBottom: '1px dashed #224422', paddingBottom: '6px' }}>
+              {/* Player HP */}
+              <div>
+                <span style={{ color: '#fff', fontWeight: 'bold' }}>PROBE: </span>
+                <span style={{ color: isLowHp ? 'var(--amber-warning)' : '#00ff88' }}>
+                  {drawBar(player.hp, effectiveMaxHp, 15)} {player.hp}/{effectiveMaxHp} HP
+                </span>
+              </div>
+              
+              {/* Enemy HP */}
+              {activeCombatEnemy ? (
+                <div>
+                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{activeCombatEnemy.name}: </span>
+                  <span style={{ color: '#ff3333' }}>
+                    {drawBar(activeCombatEnemy.hp, activeCombatEnemy.maxHp, 15)} {activeCombatEnemy.hp}/{activeCombatEnemy.maxHp} HP
+                  </span>
+                </div>
+              ) : (
+                <div style={{ color: '#555555' }}>SCANNING SENSOR ECHOES...</div>
+              )}
+            </div>
+
+            {/* Middle row: ASCII Arena */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '10px 0' }}>
+              {/* Opponent top right */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', height: '110px', paddingRight: '20px' }}>
+                {activeCombatEnemy && (
+                  <pre style={{ margin: 0, color: activeCombatEnemy.fg, background: activeCombatEnemy.bg, fontFamily: 'Share Tech Mono, monospace', fontSize: '0.85rem', lineHeight: '1.2' }}>
+                    {activeCombatEnemy.visual}
+                  </pre>
+                )}
+              </div>
+
+              {/* Player bottom left */}
+              <div style={{ display: 'flex', justifyContent: 'flex-start', height: '110px', paddingLeft: '20px' }}>
+                <pre style={{ margin: 0, color: '#00ff88', fontFamily: 'Share Tech Mono, monospace', fontSize: '0.85rem', lineHeight: '1.2' }}>
+                  {PLAYER_ASCII}
+                </pre>
+              </div>
+            </div>
+
+            {/* Special clickable attacks */}
+            <div style={{ borderTop: '1px dashed #224422', paddingTop: '8px', paddingBottom: '4px' }}>
+              <div style={{ fontSize: '0.75rem', opacity: 0.8, marginBottom: '4px', textTransform: 'uppercase' }}>Click to override autopilot attack vectors:</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {SPECIAL_ATTACKS.map((attack) => {
+                  const currentCd = playerAttackCooldowns[attack.id] || 0;
+                  const isCooldownActive = currentCd > 0;
+                  const costWatts = attack.id === 'overclock_pierce' ? 5 : 0;
+                  const hasInsufficientWatts = costWatts > 0 && resources.gridWatts.amount < costWatts;
+                  
+                  return (
+                    <button
+                      key={attack.id}
+                      disabled={isCooldownActive || hasInsufficientWatts || !activeCombatEnemy}
+                      onClick={() => handleSpecialAttack(attack.id)}
+                      className="op-button"
+                      style={{
+                        flex: 1,
+                        fontSize: '0.75rem',
+                        padding: '4px 6px',
+                        border: '1px solid ' + (isCooldownActive || hasInsufficientWatts ? '#444' : 'var(--terminal-green)'),
+                        color: isCooldownActive ? '#666' : hasInsufficientWatts ? 'var(--amber-warning)' : 'var(--terminal-green)',
+                        background: 'transparent',
+                        cursor: (isCooldownActive || hasInsufficientWatts || !activeCombatEnemy) ? 'not-allowed' : 'pointer',
+                        fontFamily: 'Share Tech Mono, monospace',
+                        textAlign: 'left'
+                      }}
+                      title={attack.description}
+                    >
+                      <div>[{isCooldownActive ? `CD: ${(currentCd / 20).toFixed(1)}s` : attack.name}]</div>
+                      <div style={{ fontSize: '0.65rem', opacity: 0.7 }}>{attack.costDesc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Scrollable logs */}
+            <div 
+              style={{
+                height: '75px',
+                border: '1px solid #1a331a',
+                background: '#020202',
+                padding: '6px',
+                fontSize: '0.75rem',
+                overflowY: 'auto',
+                whiteSpace: 'pre-wrap',
+                marginTop: '6px'
+              }}
+            >
+              {combatHistory.length === 0 ? (
+                <div style={{ color: '#444' }}>AUTOPILOT DIAGNOSTIC SUBROUTINES INITIALIZED...</div>
+              ) : (
+                combatHistory.map((log, idx) => (
+                  <div key={idx} style={{ color: log.startsWith('★') ? '#ffd700' : log.startsWith('>>') ? '#00ff88' : 'inherit' }}>
+                    {log}
+                  </div>
+                ))
+              )}
+              <div ref={logEndRef} />
+            </div>
+          </>
+        )}
+
         {/* Low HP Warning Banner */}
         {isLowHp && !standby && (
           <div 
             style={{
               position: 'absolute',
-              bottom: '10px', left: '10px', right: '10px',
+              top: '40px', left: '10px', right: '10px',
               background: 'rgba(255, 0, 0, 0.85)',
               color: '#fff',
               padding: '6px 12px',
@@ -374,7 +600,7 @@ export const GridViewport: React.FC = () => {
                 OPERATOR LOGISTICS
               </div>
               <div style={{ color: isLowHp ? 'var(--amber-warning)' : 'inherit', fontWeight: isLowHp ? 'bold' : 'normal' }}>
-                HP: {player.hp} / {player.maxHp}
+                HP: {player.hp} / {effectiveMaxHp}
               </div>
               <div>LEVEL: {player.level}</div>
               <div>XP: {player.experience} / {player.experienceToNextLevel}</div>
@@ -382,6 +608,39 @@ export const GridViewport: React.FC = () => {
               <div>DEF: {player.baseDefense} (+{eqStats.defense})</div>
               <div>SPD: {player.speed} (+{eqStats.speed})</div>
               
+              {/* Set Bonuses */}
+              <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', margin: '8px 0 5px 0' }}>
+                ACTIVE SET SYNERGIES
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
+                {eqStats.mainframeCount >= 2 ? (
+                  <div style={{ color: '#00ff88' }}>🛡️ Mainframe (2/4): +15 Max HP</div>
+                ) : (
+                  <div style={{ color: '#555' }}>🛡️ Mainframe: {eqStats.mainframeCount}/4 equipped</div>
+                )}
+                {eqStats.mainframeCount >= 4 && (
+                  <div style={{ color: '#00ff88' }}>⚡ Mainframe (4/4): +5 DEF, ATK +2% Watts, Overclock pierce CD -50%</div>
+                )}
+
+                {eqStats.glitchCount >= 2 ? (
+                  <div style={{ color: '#00ff88' }}>🔮 Glitch (2/4): +8% Crit Chance</div>
+                ) : (
+                  <div style={{ color: '#555' }}>🔮 Glitch: {eqStats.glitchCount}/4 equipped</div>
+                )}
+                {eqStats.glitchCount >= 4 && (
+                  <div style={{ color: '#00ff88' }}>🌀 Glitch (4/4): 25% loop chance, Crit siphons Static & Echo</div>
+                )}
+
+                {eqStats.quantumCount >= 2 ? (
+                  <div style={{ color: '#00ff88' }}>⚛️ Quantum (2/4): +5 ATK</div>
+                ) : (
+                  <div style={{ color: '#555' }}>⚛️ Quantum: {eqStats.quantumCount}/4 equipped</div>
+                )}
+                {eqStats.quantumCount >= 4 && (
+                  <div style={{ color: '#00ff88' }}>💫 Quantum (4/4): +4 Speed, 30% Foam extract, Buffer Overrun x2 dmg</div>
+                )}
+              </div>
+
               <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', margin: '8px 0 5px 0' }}>
                 LOADOUT
               </div>
@@ -414,27 +673,33 @@ export const GridViewport: React.FC = () => {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   {player.inventory.map((item, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', border: '1px solid #224422', padding: '3px' }}>
-                      <div style={{ minWidth: 0, flex: 1, marginRight: '4px' }}>
-                        <div style={{ fontWeight: 'bold', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
-                        <div style={{ fontSize: '0.75rem', opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
+                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', border: '1px solid #224422', padding: '4px', background: '#0a0d0a' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: item.set ? '#ffd700' : '#00ff88' }}>
+                          {item.name}
+                        </div>
+                        <button 
+                          onClick={() => handleUseItem(item, idx)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid var(--terminal-green)',
+                            color: 'var(--terminal-green)',
+                            cursor: 'pointer',
+                            fontFamily: 'Share Tech Mono, monospace',
+                            fontSize: '0.7rem',
+                            padding: '1px 3px',
+                            flexShrink: 0
+                          }}
+                        >
+                          {item.category === 'consumable' ? '[USE]' : '[EQ]'}
+                        </button>
                       </div>
-                      <button 
-                        onClick={() => handleUseItem(item, idx)}
-                        style={{
-                          background: 'transparent',
-                          border: '1px solid var(--terminal-green)',
-                          color: 'var(--terminal-green)',
-                          cursor: 'pointer',
-                          fontFamily: 'Share Tech Mono, monospace',
-                          fontSize: '0.75rem',
-                          alignSelf: 'center',
-                          padding: '2px 4px',
-                          flexShrink: 0
-                        }}
-                      >
-                        {item.category === 'consumable' ? '[USE]' : '[EQ]'}
-                      </button>
+                      <div style={{ fontSize: '0.75rem', opacity: 0.85, marginTop: '2px' }}>{item.description}</div>
+                      {item.set && (
+                        <div style={{ fontSize: '0.7rem', color: '#ffb997', fontStyle: 'italic', marginTop: '1px' }}>
+                          Set Piece: {item.set}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -447,7 +712,7 @@ export const GridViewport: React.FC = () => {
             <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div>
                 <div style={{ fontWeight: 'bold', borderBottom: '1px solid var(--terminal-green)', marginBottom: '3px' }}>GRID DEPTH</div>
-                <div>FLOOR: <strong style={{ color: '#fff' }}>Depth {currentMap?.depth || 1}</strong></div>
+                <div>FLOOR: <strong style={{ color: '#fff' }}>Depth {highestDepthReached}</strong></div>
               </div>
 
               <div>
@@ -469,7 +734,7 @@ export const GridViewport: React.FC = () => {
                     onClick={triggerOvercharge}
                     disabled={resources.gridWatts.amount < 10}
                     className="op-button"
-                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px', cursor: 'pointer', fontFamily: 'Share Tech Mono, monospace', color: 'var(--terminal-green)', border: '1px solid var(--terminal-green)', background: 'transparent' }}
                     title="Route Watts to overcharge probe attack capacity."
                   >
                     ⚡ OVERCHARGE ATK (10W)
@@ -478,7 +743,7 @@ export const GridViewport: React.FC = () => {
                     onClick={triggerShieldRecharge}
                     disabled={resources.gridWatts.amount < 15}
                     className="op-button"
-                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px', cursor: 'pointer', fontFamily: 'Share Tech Mono, monospace', color: 'var(--terminal-green)', border: '1px solid var(--terminal-green)', background: 'transparent' }}
                     title="Recharge shields to repair probe integrity."
                   >
                     🛡 RECHARGE SHIELD (15W)
@@ -487,7 +752,7 @@ export const GridViewport: React.FC = () => {
                     onClick={triggerRadarScan}
                     disabled={resources.staticNoise.amount < 50}
                     className="op-button"
-                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px', cursor: 'pointer', fontFamily: 'Share Tech Mono, monospace', color: 'var(--terminal-green)', border: '1px solid var(--terminal-green)', background: 'transparent' }}
                     title="Scan sector electromagnetic echo to map floor layout."
                   >
                     📡 RADAR SCAN (50 Static)
@@ -496,7 +761,7 @@ export const GridViewport: React.FC = () => {
                     onClick={triggerRepairNanites}
                     disabled={resources.quantumFoam.amount < 20}
                     className="op-button"
-                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px' }}
+                    style={{ width: '100%', fontSize: '0.75rem', textAlign: 'left', padding: '4px', cursor: 'pointer', fontFamily: 'Share Tech Mono, monospace', color: 'var(--terminal-green)', border: '1px solid var(--terminal-green)', background: 'transparent' }}
                     title="Inject repair nanites to restore gear durability by 50%."
                   >
                     🔧 REPAIR GEAR (20 Foam)
@@ -510,4 +775,5 @@ export const GridViewport: React.FC = () => {
     </div>
   );
 };
+
 export default GridViewport;
